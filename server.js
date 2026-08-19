@@ -25,9 +25,8 @@ let activeTickets = [];
 let drawnNumbers = [];    
 let isDrawing = false;
 let gameTimer = 60; 
-let currentFakePlayerCount = 3200; // ቢያንስ በ 3,000+ ይጀምራል
+let currentFakePlayerCount = 3150; // ቢያንስ በ 3,000+ ይጀምራል
 
-// 🎯 Paytable definition
 const PAYTABLE = {
   1: { 1: 3.5 },
   2: { 2: 10, 1: 1 },
@@ -41,26 +40,25 @@ const PAYTABLE = {
   10: { 10: 25000, 9: 2000, 8: 400, 7: 50, 6: 10, 5: 2 }
 };
 
-// 👨‍🦱 90% የወንድ ስሞች + 👩‍🦰 10% የሴት ስሞች (Amharic & English)
+// 👨 90% የወንድ ስሞች ዝርዝር
 const MALE_NAMES = [
   "Abebe", "Dawit", "Daniel", "Kirubel", "Yonas", "Solomon", "Alex", "Sami", "Michael", "Robel",
   "Nati", "Aman", "Ermias", "Henok", "Yosef", "Kibrom", "Binyam", "Abel", "Tewodros", "Kaleb",
   "አበበ", "ዳዊት", "ሰለሞን", "ኪሩቤል", "ዮናስ", "በሬሳ", "ዮሴፍ", "አማኑኤል", "ኤርሚያስ", "ሄኖክ", "ካሌብ", "ናታን"
 ];
 
+// 👩 10% የሴት ስሞች ዝርዝር
 const FEMALE_NAMES = [
   "Martha", "Helen", "Tiji", "Eden", "Betelhem", "Feven", "Maki", "Ruth",
   "ማርታ", "ሄለን", "ቲጂ", "ቃልኪዳን", "እምነት"
 ];
 
-// 90% Male, 10% Female የመምረጥ Logic
 function getRandomName() {
-  const isMale = Math.random() < 0.9; // 90% Chance
+  const isMale = Math.random() < 0.9; // 90% የወንድ እድል
   const list = isMale ? MALE_NAMES : FEMALE_NAMES;
   return list[Math.floor(Math.random() * list.length)];
 }
 
-// 💵 የመደብ ብር ከ 5 እስከ 1000 ብር
 const BET_OPTIONS = [5, 10, 20, 50, 100, 200, 500, 1000];
 
 bot.setMyCommands([
@@ -117,21 +115,18 @@ bot.onText(/\/deposit_(\d+)_(\d+(\.\d+)?)/, (msg, match) => {
   bot.sendMessage(targetUserId, `🎉 የ ${amount} ETB Deposit ጥያቄዎ ጸድቋል!\n\n💰 የአሁኑ ባላንስዎ፦ ${newBalance.toFixed(2)} ETB`);
 });
 
-// ⏱️ የጨዋታው Timer እና በየሰከንዱ የተጫዋች ቁጥር መጨመሪያ Logic
+// ⏱️ በየሰከንዱ ተጫዋች መጨመሪያ Logic (Reload ሳይባል)
 setInterval(() => {
   if (!isDrawing) {
     gameTimer--;
 
-    // 1. በየሰከንዱ ከ 25 እስከ 80 የሚደርሱ አዳዲስ Fake Players መጨመር
-    const incrementalPlayers = Math.floor(Math.random() * 55) + 25;
-    currentFakePlayerCount += incrementalPlayers;
+    // 1. በየሰከንዱ ከ 20 እስከ 60 አዳዲስ Fake Players መጨመር
+    currentFakePlayerCount += Math.floor(Math.random() * 40) + 20;
 
-    // 2. በየሰከንዱ 1 ወይም 2 አዳዲስ Fake Tickets በ UI እንዲታዩ መፍጠር
-    if (Math.random() < 0.8) { // 80% እድል በየሰከንዱ
-      addNewFakeTicket();
-    }
+    // 2. በየሰከንዱ አዲስ Fake Ticket ማፍራት
+    addNewFakeTicket();
 
-    // 3. Real-time መረጃዎችን ለሁሉም ተጫዋቾች መላክ
+    // 3. Real-Time መረጃዎችን ለሁሉም ብራውዘር መላክ (Reload አይጠይቅም)
     io.emit('timerUpdate', gameTimer);
     io.emit('updateActiveTickets', {
       tickets: activeTickets,
@@ -142,7 +137,6 @@ setInterval(() => {
   }
 }, 1000);
 
-// 🤖 አዲስ Fake Ticket በየሰከንዱ ማፍሪያ
 function addNewFakeTicket() {
   const randomName = getRandomName();
   const spotCount = Math.floor(Math.random() * 6) + 2; 
@@ -168,18 +162,17 @@ function addNewFakeTicket() {
   };
 
   activeTickets.push(fakeTicket);
-  
-  // ከ 30 በላይ እንዳይበዛ አሮጌዎቹን ማስወገድ
-  if (activeTickets.length > 30) {
+
+  // ስክሪኑ ላይ ከ 25 በላይ እንዳይከበድ አሮጌዎቹን ማስወገድ
+  if (activeTickets.length > 25) {
     const realUsers = activeTickets.filter(t => !t.isBot);
     const botsOnly = activeTickets.filter(t => t.isBot);
-    activeTickets = [...realUsers, ...botsOnly.slice(-25)];
+    activeTickets = [...realUsers, ...botsOnly.slice(-20)];
   }
 
   sortActiveTickets();
 }
 
-// 🔝 Sorting: User Tickets ሁልጊዜ TOP ላይ፣ ከዛ በ Bet መጠን
 function sortActiveTickets(currentUserId = null) {
   activeTickets.sort((a, b) => {
     if (currentUserId) {
@@ -218,8 +211,7 @@ function startKenoDraw() {
         gameTimer = 60;
         drawnNumbers = [];
         activeTickets = [];
-        // በየጨዋታው በትንሹ ከ 3,000 እስከ 5,000 በሆነ ቁጥር ይመለሳል
-        currentFakePlayerCount = Math.floor(Math.random() * 2000) + 3000; 
+        currentFakePlayerCount = Math.floor(Math.random() * 1500) + 3000; // በየጨዋታው በ 3,000+ ይጀምራል
         io.emit('gameReset');
       }, 4000);
     }
