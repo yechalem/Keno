@@ -1,137 +1,204 @@
 const express = require('express');
 const http = require('http');
+const { Server } = require('socket.io');
 const TelegramBot = require('node-telegram-bot-api');
 const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
+const io = new Server(server, { cors: { origin: "*" } });
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '8707515963:AAEyGvW6EBngaucnqJkxx1iTERTvZ9U2T8E';
-const ADMIN_ID = process.env.ADMIN_ID || '686733543';
+const WEB_APP_URL = "https://tiny-dasik-98c906.netlify.app";
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
-// የላኩትን Netlify አድራሻ እዚህ ያስገቡ
-const WEB_APP_URL = "https://tiny-dasik-98c906.netlify.app";
+// 📌 Database (In-Memory Storage)
+const usersDB = {};       // Telegram ID -> { id, name, balance, history: [] }
+let activeTickets = [];   // የሁሉም ተጫዋቾች ወቅታዊ ቲኬቶች
+let drawnNumbers = [];    // የወጡ 20 ቁጥሮች
+let isDrawing = false;
+let gameTimer = 30;
 
-bot.on("polling_error", (err) => {
-  if (!err.message.includes('409 Conflict')) {
-    console.log("Bot Warning:", err.message);
-  }
-});
+// Keno Multipliers (የማሸነፊያ ብዛት ብmultiplier)
+const PAYTABLE = {
+  1: { 1: 3.5 },
+  2: { 2: 10, 1: 1 },
+  3: { 3: 50, 2: 2 },
+  4: { 4: 100, 3: 5, 2: 1 },
+  5: { 5: 300, 4: 15, 3: 2 },
+  6: { 6: 1000, 5: 50, 4: 5, 3: 1 },
+  7: { 7: 2000, 6: 100, 5: 12, 4: 2 },
+  8: { 8: 5000, 7: 300, 6: 40, 5: 8, 4: 1 },
+  9: { 9: 10000, 8: 1000, 7: 150, 6: 20, 5: 3 },
+  10: { 10: 25000, 9: 2000, 8: 400, 7: 50, 6: 10, 5: 2 }
+};
 
-// 1. የቴሌግራም ሜኑ (Menu Button)
+// Bot Menu & Commands
 bot.setMyCommands([
   { command: 'play', description: '🎮 Play Keno' },
-  { command: 'deposit', description: '📥 Deposit' },
-  { command: 'withdraw', description: '📤 Withdraw' },
   { command: 'balance', description: '💰 Check Balance' },
-  { command: 'admin', description: '👤 Admin Support' }
+  { command: 'history', description: '📜 My History' }
 ]);
 
-// 2. /start ትዕዛዝ
 bot.onText(/\/start/, (msg) => {
-  const chatId = msg.chat.id;
+  const userId = String(msg.from.id);
   const userName = msg.from.first_name || "ተጫዋች";
 
-  const welcomeText = `እንኳን ደህና መጡ ${userName}! 👋\n\nከታች ባሉት አማራጮች መጠቀም ይችላሉ፦`;
+  // 📌 Telegram ID ን በ DB መመዝገብ
+  if (!usersDB[userId]) {
+    usersDB[userId] = { id: userId, name: userName, balance: 100.00, history: [] };
+  }
 
-  const options = {
+  bot.sendMessage(msg.chat.id, `እንኳን ደህና መጡ ${userName}! 👋\nእንኳን ወደ Keno Game በሰላም መጡ።\n\n💰 ባላንስዎ: ${usersDB[userId].balance} ETB`, {
     reply_markup: {
-      inline_keyboard: [
-        [{ text: "🎮 Play Keno", web_app: { url: WEB_APP_URL } }],
-        [
-          { text: "📥 Deposit", callback_data: "deposit" },
-          { text: "📤 Withdraw", callback_data: "withdraw" }
-        ],
-        [
-          { text: "💰 Check Balance", callback_data: "balance" },
-          { text: "👤 Admin Support", url: "https://t.me/YOUR_ADMIN_USERNAME" }
-        ]
-      ]
+      inline_keyboard: [[{ text: "🎮 Play Keno", web_app: { url: WEB_APP_URL } }]]
     }
-  };
-
-  bot.sendMessage(chatId, welcomeText, options);
-});
-
-// 3. Web App መረጃ ሲልክ (ተጫዋቹ ቁጥር መርጦ መድብ ሲል)
-bot.on('web_app_data', async (msg) => {
-  const chatId = msg.chat.id;
-  try {
-    const data = JSON.parse(msg.web_app_data.data);
-    const selectedNumbers = data.numbers;
-    const stake = data.stake;
-
-    bot.sendMessage(chatId, `✅ **ቲኬትዎ ተይዟል!**\n\n🎯 የመረጧቸው ቁጥሮች፦ ${selectedNumbers.join(', ')}\n💰 የያዙት መደብ፦ ${stake} ETB\n\n🎲 *የእጣ ማውጣት ሂደቱ እየተዘጋጀ ነው...*`, { parse_mode: 'Markdown' });
-
-    // ከ 2 ሰከንድ በኋላ የእጣ ማውጣት ሂደት ይጀምራል
-    setTimeout(() => {
-      runDrawProcess(chatId, selectedNumbers, stake);
-    }, 2000);
-
-  } catch (e) {
-    bot.sendMessage(chatId, "⚠️ መረጃውን በማቀናበር ላይ ስህተት ተፈጥሯል።");
-  }
-});
-
-// 4. የእጣ ማውጣት ፕሮሰስ (20 ቁጥሮች በዘፈቀደ ማውጣት)
-function runDrawProcess(chatId, selectedNumbers, stake) {
-  let drawnNumbers = [];
-  while (drawnNumbers.length < 20) {
-    let rand = Math.floor(Math.random() * 80) + 1;
-    if (!drawnNumbers.includes(rand)) {
-      drawnNumbers.push(rand);
-    }
-  }
-
-  // ተጫዋቹ የገመታቸው ቁጥሮች ስንት እንደገቡ መቁጠር
-  let hits = selectedNumbers.filter(num => drawnNumbers.includes(num));
-
-  let resultMsg = `🎉 **የእጣ ውጤት (Draw Results)!**\n\n`;
-  resultMsg += `🎰 ** የወጡ ቁጥሮች (20)፦**\n${drawnNumbers.join(', ')}\n\n`;
-  resultMsg += `🎯 **የእርስዎ ቁጥሮች፦** ${selectedNumbers.join(', ')}\n`;
-  resultMsg += `✅ **የገቡልዎት ቁጥሮች count፦** ${hits.length} / ${selectedNumbers.length}\n`;
-
-  if (hits.length > 0) {
-    resultMsg += `\n🔥 **እንኳን ደስ አለዎት! ${hits.length} ቁጥሮች ገብተውልዎታል!**`;
-  } else {
-    resultMsg += `\nለአሁኑ አልወጣልዎትም፤ እባክዎን እንደገና ይሞክሩ!`;
-  }
-
-  bot.sendMessage(chatId, resultMsg, { parse_mode: 'Markdown' });
-}
-
-// 5. ከአዝራሮች ለሚመጡ ጥያቄዎች ምላሽ
-bot.on('callback_query', (query) => {
-  const chatId = query.message.chat.id;
-  const data = query.data;
-
-  if (data === 'deposit') {
-    bot.sendMessage(chatId, "📥 **ገንዘብ ማስገቢያ (Deposit)**\n\nገቢ ለማድረግ የሚፈልጉትን የብር መጠን ያስገቡ።");
-  } else if (data === 'withdraw') {
-    bot.sendMessage(chatId, "📤 **ገንዘብ ማውጫ (Withdraw)**\n\nወጪ ማድረግ የሚፈልጉትን የብር መጠን ያስገቡ።");
-  } else if (data === 'balance') {
-    bot.sendMessage(chatId, "💰 **የሒሳብዎ መጠን፦** 100.00 ETB");
-  }
-
-  bot.answerCallbackQuery(query.id);
-});
-
-// 6. ከ Menu ለሚመጡ ኮማንዶች
-bot.onText(/\/play/, (msg) => {
-  bot.sendMessage(msg.chat.id, "🎮 **ጨዋታውን ለመጀመር ከታች ያለውን ይጫኑ፦**", {
-    reply_markup: { inline_keyboard: [[{ text: "🎮 Open Keno", web_app: { url: WEB_APP_URL } }]] }
   });
 });
 
-bot.onText(/\/deposit/, (msg) => bot.sendMessage(msg.chat.id, "📥 **ገንዘብ ማስገቢያ (Deposit)**"));
-bot.onText(/\/withdraw/, (msg) => bot.sendMessage(msg.chat.id, "📤 **ገንዘብ ማውጫ (Withdraw)**"));
-bot.onText(/\/balance/, (msg) => bot.sendMessage(msg.chat.id, "💰 **የሒሳብዎ መጠን፦** 100.00 ETB"));
-bot.onText(/\/admin/, (msg) => bot.sendMessage(msg.chat.id, "👤 **የአድሚን ማነጋገርያ፦** @YOUR_ADMIN_USERNAME"));
+bot.onText(/\/balance/, (msg) => {
+  const userId = String(msg.from.id);
+  const bal = usersDB[userId] ? usersDB[userId].balance : 100.00;
+  bot.sendMessage(msg.chat.id, `💰 **የአሁኑ ባላንስዎ፦** ${bal.toFixed(2)} ETB`);
+});
+
+// ⏱️ የቆጠራ ሰዓት (30 ሰከንድ)
+setInterval(() => {
+  if (!isDrawing) {
+    gameTimer--;
+    io.emit('timerUpdate', gameTimer);
+    if (gameTimer <= 0) {
+      startKenoDraw();
+    }
+  }
+}, 1000);
+
+// 🎲 የእጣ ማውጣት ሂደት (Draw Engine)
+function startKenoDraw() {
+  isDrawing = true;
+  drawnNumbers = [];
+  io.emit('drawStarted');
+
+  let count = 0;
+  const interval = setInterval(() => {
+    let rand;
+    do {
+      rand = Math.floor(Math.random() * 80) + 1;
+    } while (drawnNumbers.includes(rand));
+
+    drawnNumbers.push(rand);
+    count++;
+
+    // 📌 አዲስ የወጣውን ቁጥር ለሁሉም ማሳወቅ
+    io.emit('newDrawnNumber', { number: rand, drawnList: drawnNumbers });
+
+    if (count >= 20) {
+      clearInterval(interval);
+      calculateWinnings();
+
+      setTimeout(() => {
+        isDrawing = false;
+        gameTimer = 30;
+        drawnNumbers = [];
+        activeTickets = [];
+        io.emit('gameReset');
+      }, 7000);
+    }
+  }, 1500);
+}
+
+// 💰 ሂሳብ ማስላት (Paytable)
+function calculateWinnings() {
+  activeTickets.forEach(ticket => {
+    const user = usersDB[ticket.userId];
+    if (!user) return;
+
+    const hits = ticket.numbers.filter(num => drawnNumbers.includes(num));
+    const spotSize = ticket.numbers.length;
+    const hitCount = hits.length;
+
+    let winAmount = 0;
+    if (PAYTABLE[spotSize] && PAYTABLE[spotSize][hitCount]) {
+      winAmount = ticket.bet * PAYTABLE[spotSize][hitCount];
+      user.balance += winAmount; // 📌 ባላንስ ላይ መጨመር
+    }
+
+    // History መመዝገብ
+    const historyItem = {
+      id: Date.now(),
+      numbers: ticket.numbers,
+      hits: hits,
+      bet: ticket.bet,
+      win: winAmount,
+      date: new Date().toLocaleTimeString()
+    };
+    user.history.unshift(historyItem);
+    if (user.history.length > 10) user.history.pop();
+
+    // ለተጫዋቹ ውጤት መላክ
+    io.to(ticket.socketId).emit('ticketResult', {
+      winAmount,
+      hitsCount: hitCount,
+      userBalance: user.balance,
+      history: user.history
+    });
+  });
+}
+
+// Socket.io Realtime Connections
+io.on('connection', (socket) => {
+  socket.on('registerUser', (tgUser) => {
+    const userId = String(tgUser.id);
+    if (!usersDB[userId]) {
+      usersDB[userId] = { id: userId, name: tgUser.first_name || "ተጫዋች", balance: 100.00, history: [] };
+    }
+    socket.userId = userId;
+    socket.join(userId);
+
+    socket.emit('userData', {
+      user: usersDB[userId],
+      activeTickets: activeTickets,
+      timer: gameTimer,
+      isDrawing: isDrawing,
+      drawnNumbers: drawnNumbers
+    });
+  });
+
+  socket.on('buyTicket', (data) => {
+    const user = usersDB[data.userId];
+    if (!user) return;
+
+    if (isDrawing) {
+      return socket.emit('errorMsg', 'ጨዋታው እየሄደ ነው! እባክዎን ቀጣዩን ዙር ይበቁ።');
+    }
+
+    if (user.balance < data.bet) {
+      return socket.emit('errorMsg', 'በቂ ባላንስ የለዎትም!');
+    }
+
+    // 📌 ባላንስ ላይ መቀነስ
+    user.balance -= data.bet;
+
+    const newTicket = {
+      id: Date.now(),
+      userId: user.id,
+      userName: user.name,
+      numbers: data.numbers,
+      bet: data.bet,
+      socketId: socket.id
+    };
+
+    activeTickets.push(newTicket);
+
+    // ለሁሉም ተጫዋች አዲሱን ቲኬት ማሳየት
+    io.emit('updateActiveTickets', activeTickets);
+    socket.emit('balanceUpdated', user.balance);
+  });
+});
 
 app.use(express.static(__dirname));
-app.get('/', (req, res) => res.send('Keno Bot Backend is Running!'));
+app.get('/', (req, res) => res.send('Keno Game Engine Live!'));
 
 const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
