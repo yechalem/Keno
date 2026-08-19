@@ -24,7 +24,7 @@ const usersDB = {};
 let activeTickets = [];   
 let drawnNumbers = [];    
 let isDrawing = false;
-let gameTimer = 60; // ⏱️ በየ 1 ደቂቃው (60s)
+let gameTimer = 60; // ⏱️ የ 1 ደቂቃ ጨዋታ (60 ሰከንድ)
 
 const PAYTABLE = {
   1: { 1: 3.5 },
@@ -72,10 +72,10 @@ bot.onText(/\/balance/, (msg) => {
   bot.sendMessage(msg.chat.id, `💰 **የአሁኑ ባላንስዎ፦** ${bal.toFixed(2)} ETB`);
 });
 
-// 📌 Admin Deposit Approve ማድረጊያ (ባላንስ በቀጥታ ይደመራል)
+// 📌 Admin Approve ሲል ባላንስ ወዲያውኑ በ Real-Time ይደመራል
 bot.onText(/\/deposit_(\d+)_(\d+(\.\d+)?)/, (msg, match) => {
   if (String(msg.chat.id) !== String(ADMIN_ID)) return;
-  const targetUserId = match[1];
+  const targetUserId = String(match[1]);
   const amount = parseFloat(match[2]);
 
   if (!usersDB[targetUserId]) usersDB[targetUserId] = { id: targetUserId, name: "ተጫዋች", balance: 0, history: [] };
@@ -86,7 +86,7 @@ bot.onText(/\/deposit_(\d+)_(\d+(\.\d+)?)/, (msg, match) => {
   bot.sendMessage(targetUserId, `🎉 ሂሳብዎ ላይ ${amount} ETB ገቢ ሆኗል!`);
 });
 
-// ⏱️ የ 1 ደቂቃ የሰዓት ቆጠራ
+// ⏱️ የ 1 ደቂቃ (60s) የሰዓት ቆጠራ Loop
 setInterval(() => {
   if (!isDrawing) {
     gameTimer--;
@@ -112,11 +112,12 @@ function startKenoDraw() {
 
     io.emit('newDrawnNumber', { number: rand, drawnList: drawnNumbers });
 
-    if (count >= 20) { // 📌 20 ቁጥር ብቻ ይወጣል
+    // 📌 20 ቁጥሮች ብቻ ይወጣሉ
+    if (count >= 20) {
       clearInterval(interval);
       calculateWinnings();
 
-      // 📌 የወጡትን ቁጥሮች ተጫዋች አረጋግጦ እንዲያይ 3 ሰከንድ ብቻ ጠብቆ Clear ያደርጋል
+      // 📌 የወጡትን ቁጥሮች ተጫዋች አረጋግጦ እንዲያይ 3 ሰከንድ ብቻ ጠብቆ አፅድቶ ይጀምራል
       setTimeout(() => {
         isDrawing = false;
         gameTimer = 60;
@@ -173,11 +174,11 @@ io.on('connection', (socket) => {
     const user = usersDB[data.userId];
     if (!user) return;
 
-    // 📌 1 ሰከንድ ሲቀረው ወይም ጨዋታው ከጀመረ ይከለክላል
+    // 📌 1 ሰከንድ ሲቀረው ወይም ጨዋታው ሲጀምር መቁረጥ አይቻልም
     if (isDrawing || gameTimer <= 1) {
       return socket.emit('errorMsg', 'ጨዋታው ሊጀምር ስለሆነ ትኬት መቁረጥ ተዘግቷል!');
     }
-    if (user.balance < data.bet) return socket.emit('errorMsg', 'በቂ ባላንስ የለዎትም! እባክዎን Deposit ያድርጉ።');
+    if (user.balance < data.bet) return socket.emit('errorMsg', 'በቂ ባላንስ የለዎትም!');
 
     user.balance -= data.bet;
 
@@ -193,7 +194,7 @@ io.on('connection', (socket) => {
     activeTickets.push(newTicket);
     io.emit('updateActiveTickets', activeTickets);
     socket.emit('balanceUpdated', user.balance);
-    socket.emit('ticketBoughtSuccess'); // 📌 መድብ ሲባል ቦርዱን Clear ማድረጊያ Signal
+    socket.emit('ticketBoughtSuccess'); // 📌 መድብ ሲባል ቦርዱን Clear ማድረጊያ
   });
 
   socket.on('requestDeposit', (data) => {
