@@ -1,6 +1,7 @@
 {
-  "name": "my-new-keno-bot",
+  "name": "my-keno-bot",
   "version": "1.0.0",
+  "description": "Telegram Keno Game Bot",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
