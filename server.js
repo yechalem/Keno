@@ -24,7 +24,7 @@ const usersDB = {};
 let activeTickets = [];   
 let drawnNumbers = [];    
 let isDrawing = false;
-let gameTimer = 60; // ⏱️ ጨዋታው በየ 1 ደቂቃው (60 ሰከንድ)
+let gameTimer = 60; // ⏱️ በየ 1 ደቂቃው (60s)
 
 const PAYTABLE = {
   1: { 1: 3.5 },
@@ -72,7 +72,7 @@ bot.onText(/\/balance/, (msg) => {
   bot.sendMessage(msg.chat.id, `💰 **የአሁኑ ባላንስዎ፦** ${bal.toFixed(2)} ETB`);
 });
 
-// 📌 Admin Deposit Approve ማድረጊያ - ባላንስ ወዲያውኑ እንዲደመር የተስተካከለ
+// 📌 Admin Deposit Approve ማድረጊያ (ባላንስ በቀጥታ ይደመራል)
 bot.onText(/\/deposit_(\d+)_(\d+(\.\d+)?)/, (msg, match) => {
   if (String(msg.chat.id) !== String(ADMIN_ID)) return;
   const targetUserId = match[1];
@@ -81,13 +81,12 @@ bot.onText(/\/deposit_(\d+)_(\d+(\.\d+)?)/, (msg, match) => {
   if (!usersDB[targetUserId]) usersDB[targetUserId] = { id: targetUserId, name: "ተጫዋች", balance: 0, history: [] };
   usersDB[targetUserId].balance += amount;
 
-  // 📌 ለተጫዋቹ በ Socket እና በ Telegram አሳውቅ
   io.to(targetUserId).emit('balanceUpdated', usersDB[targetUserId].balance);
-  bot.sendMessage(ADMIN_ID, `✅ ለ ID: ${targetUserId} የ ${amount} ETB Deposit ጸድቋል! የአሁኑ ባላንስ: ${usersDB[targetUserId].balance.toFixed(2)} ETB`);
-  bot.sendMessage(targetUserId, `🎉 ሂሳብዎ ላይ ${amount} ETB ገቢ ሆኗል! የአሁኑ ባላንስዎ: ${usersDB[targetUserId].balance.toFixed(2)} ETB`);
+  bot.sendMessage(ADMIN_ID, `✅ ለ ID: ${targetUserId} የ ${amount} ETB Deposit ጸድቋል!`);
+  bot.sendMessage(targetUserId, `🎉 ሂሳብዎ ላይ ${amount} ETB ገቢ ሆኗል!`);
 });
 
-// ⏱️ የ 1 ደቂቃ (60s) የሰዓት ቆጠራ
+// ⏱️ የ 1 ደቂቃ የሰዓት ቆጠራ
 setInterval(() => {
   if (!isDrawing) {
     gameTimer--;
@@ -113,11 +112,11 @@ function startKenoDraw() {
 
     io.emit('newDrawnNumber', { number: rand, drawnList: drawnNumbers });
 
-    if (count >= 20) {
+    if (count >= 20) { // 📌 20 ቁጥር ብቻ ይወጣል
       clearInterval(interval);
       calculateWinnings();
 
-      // 📌 የወጣውን ቁጥር አረጋግጦ ለማየት 3 ሰከንድ ብቻ ጠብቆ Clear በማድረግ ቀጣዩን ጨዋታ ይጀምራል
+      // 📌 የወጡትን ቁጥሮች ተጫዋች አረጋግጦ እንዲያይ 3 ሰከንድ ብቻ ጠብቆ Clear ያደርጋል
       setTimeout(() => {
         isDrawing = false;
         gameTimer = 60;
@@ -174,9 +173,9 @@ io.on('connection', (socket) => {
     const user = usersDB[data.userId];
     if (!user) return;
 
-    // 📌 ጨዋታው ከጀመረ ወይም 1 ሰከንድ ሲቀረው ትኬት መቁረጥ ይከለክላል
+    // 📌 1 ሰከንድ ሲቀረው ወይም ጨዋታው ከጀመረ ይከለክላል
     if (isDrawing || gameTimer <= 1) {
-      return socket.emit('errorMsg', 'ጨዋታው ሊጀምር ስለሆነ ትኬት መቁረጥ ተዘግቷል! ቀጣዩን ዙር ይበቁ።');
+      return socket.emit('errorMsg', 'ጨዋታው ሊጀምር ስለሆነ ትኬት መቁረጥ ተዘግቷል!');
     }
     if (user.balance < data.bet) return socket.emit('errorMsg', 'በቂ ባላንስ የለዎትም! እባክዎን Deposit ያድርጉ።');
 
@@ -194,12 +193,13 @@ io.on('connection', (socket) => {
     activeTickets.push(newTicket);
     io.emit('updateActiveTickets', activeTickets);
     socket.emit('balanceUpdated', user.balance);
+    socket.emit('ticketBoughtSuccess'); // 📌 መድብ ሲባል ቦርዱን Clear ማድረጊያ Signal
   });
 
   socket.on('requestDeposit', (data) => {
     const user = usersDB[data.userId];
     bot.sendMessage(ADMIN_ID, 
-      `📥 **የDeposit ጥያቄ!**\n\n👤 ተጫዋች: ${user ? user.name : 'Unknown'}\n🆔 ID: \`${data.userId}\`\n💰 መጠን: ${data.amount} ETB\n📱 Ref: ${data.ref}\n\nለማጽደቅ ይህን ይጫኑ፦\n/deposit_${data.userId}_${data.amount}`, 
+      `📥 **የDeposit ጥያቄ!**\n\n👤 ተጫዋች: ${user ? user.name : 'Unknown'}\n🆔 ID: \`${data.userId}\`\n💰 መጠን: ${data.amount} ETB\n📱 Ref: ${data.ref}\n\nለማጽደቅ፦\n/deposit_${data.userId}_${data.amount}`, 
       { parse_mode: 'Markdown' }
     );
     socket.emit('infoMsg', 'የDeposit ጥያቄዎ ለ Admin ተልኳል!');
