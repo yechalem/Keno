@@ -39,16 +39,16 @@ const PAYTABLE = {
   10: { 10: 25000, 9: 2000, 8: 400, 7: 50, 6: 10, 5: 2 }
 };
 
-// የቴሌግራም ሜኑ
+// የቴሌግራም ሜኑ ማዋቀሪያ
 bot.setMyCommands([
   { command: 'play', description: '🎮 Play Keno' },
   { command: 'start', description: '🔄 Restart Bot' },
   { command: 'balance', description: '💰 Check Balance' }
 ]);
 
-// /start እና /play ትዕዛዞች ማስተካከያ
-const sendMainMenu = (chatId, userName) => {
-  bot.sendMessage(chatId, `እንኳን ደህና መጡ ${userName}! 👋\n\n🎮 Keno ለመጫወት ከታች ያለውን "Play Keno" ይጫኑ።\n📱 ቴሌብር አድራሻ: ${TELEBIRR_NO}`, {
+const sendWelcomeMessage = (chatId, userName) => {
+  const text = `እንኳን ደህና መጡ ${userName}! 👋\n\n🎮 Keno ለመጫወት ከታች ያለውን "Play Keno" ቁልፍ ይጫኑ።\n📱 ቴሌብር አድራሻ: ${TELEBIRR_NO}`;
+  bot.sendMessage(chatId, text, {
     reply_markup: {
       inline_keyboard: [[{ text: "🎮 Play Keno", web_app: { url: WEB_APP_URL } }]]
     }
@@ -59,12 +59,12 @@ bot.onText(/\/start/, (msg) => {
   const userId = String(msg.from.id);
   const userName = msg.from.first_name || "ተጫዋች";
   if (!usersDB[userId]) usersDB[userId] = { id: userId, name: userName, balance: 100.00, history: [] };
-  sendMainMenu(msg.chat.id, userName);
+  sendWelcomeMessage(msg.chat.id, userName);
 });
 
 bot.onText(/\/play/, (msg) => {
   const userName = msg.from.first_name || "ተጫዋች";
-  sendMainMenu(msg.chat.id, userName);
+  sendWelcomeMessage(msg.chat.id, userName);
 });
 
 bot.onText(/\/balance/, (msg) => {
@@ -73,7 +73,7 @@ bot.onText(/\/balance/, (msg) => {
   bot.sendMessage(msg.chat.id, `💰 **የአሁኑ ባላንስዎ፦** ${bal.toFixed(2)} ETB`);
 });
 
-// Admin Deposit
+// Admin Deposit Command (/deposit_ID_AMOUNT)
 bot.onText(/\/deposit_(\d+)_(\d+)/, (msg, match) => {
   if (String(msg.chat.id) !== String(ADMIN_ID)) return;
   const targetUserId = match[1];
@@ -152,7 +152,7 @@ function calculateWinnings() {
   });
 }
 
-// Socket Connection
+// WebSocket ግንኙነቶች
 io.on('connection', (socket) => {
   socket.on('registerUser', (tgUser) => {
     const userId = String(tgUser.id);
@@ -175,7 +175,7 @@ io.on('connection', (socket) => {
     const user = usersDB[data.userId];
     if (!user) return;
     if (isDrawing) return socket.emit('errorMsg', 'ጨዋታው ስለጀመረ ቀጣዩን ዙር ይበቁ!');
-    if (user.balance < data.bet) return socket.emit('errorMsg', 'በቂ ባላንስ የለዎትም!');
+    if (user.balance < data.bet) return socket.emit('errorMsg', 'በቂ ባላንስ የለዎትም! እባክዎን Deposit ያድርጉ።');
 
     user.balance -= data.bet;
 
@@ -189,8 +189,33 @@ io.on('connection', (socket) => {
     };
 
     activeTickets.push(newTicket);
-    io.emit('updateActiveTickets', { tickets: activeTickets, drawnList: drawnNumbers });
+    // 📌 ለሁሉም ተጫዋች አዲሱን ቲኬት ወዲያውኑ መላክ
+    io.emit('updateActiveTickets', activeTickets);
     socket.emit('balanceUpdated', user.balance);
+  });
+
+  socket.on('requestDeposit', (data) => {
+    const user = usersDB[data.userId];
+    bot.sendMessage(ADMIN_ID, 
+      `📥 **የDeposit ጥያቄ!**\n\n👤 ተጫዋች: ${user ? user.name : 'Unknown'}\n🆔 ID: \`${data.userId}\`\n💰 መጠን: ${data.amount} ETB\n📱 Ref: ${data.ref}\n\nለማጽደቅ፦\n/deposit_${data.userId}_${data.amount}`, 
+      { parse_mode: 'Markdown' }
+    );
+    socket.emit('infoMsg', 'የDeposit ጥያቄዎ ለ Admin ተልኳል!');
+  });
+
+  socket.on('requestWithdraw', (data) => {
+    const user = usersDB[data.userId];
+    if (user && user.balance >= data.amount) {
+      user.balance -= data.amount;
+      socket.emit('balanceUpdated', user.balance);
+      bot.sendMessage(ADMIN_ID, 
+        `📤 **የWithdraw ጥያቄ!**\n\n👤 ተጫዋች: ${user.name}\n🆔 ID: \`${user.id}\`\n💰 መጠን: ${data.amount} ETB\n🏦 አካውንት: ${data.accountDetails}`,
+        { parse_mode: 'Markdown' }
+      );
+      socket.emit('infoMsg', 'የወጪ ጥያቄዎ ለ Admin ተልኳል።');
+    } else {
+      socket.emit('errorMsg', 'በቂ ባላንስ የለዎትም!');
+    }
   });
 });
 
