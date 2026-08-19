@@ -8,11 +8,17 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '8707515963:AAEyGvW6EBngaucnqJkxx1iTERTvZ9U2T8E';
-const ADMIN_ID = process.env.ADMIN_ID || '686733543'; // 📌 ያንተ Telegram Chat ID
+const ADMIN_ID = process.env.ADMIN_ID || '686733543';
 const TELEBIRR_NO = "0915503379";
 const WEB_APP_URL = "https://tiny-dasik-98c906.netlify.app";
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
+
+bot.on("polling_error", (err) => {
+  if (!err.message.includes('409 Conflict')) {
+    console.log("Bot Warning:", err.message);
+  }
+});
 
 const usersDB = {};       
 let activeTickets = [];   
@@ -33,39 +39,52 @@ const PAYTABLE = {
   10: { 10: 25000, 9: 2000, 8: 400, 7: 50, 6: 10, 5: 2 }
 };
 
-// 📌 1. የቴሌግራም Admin ማጽደቂያ command (/deposit_ID_AMOUNT)
-bot.onText(/\/deposit_(\d+)_(\d+)/, (msg, match) => {
-  const senderId = String(msg.chat.id);
-  if (senderId !== String(ADMIN_ID)) return;
+// የቴሌግራም ሜኑ
+bot.setMyCommands([
+  { command: 'play', description: '🎮 Play Keno' },
+  { command: 'start', description: '🔄 Restart Bot' },
+  { command: 'balance', description: '💰 Check Balance' }
+]);
 
-  const targetUserId = match[1];
-  const amount = parseFloat(match[2]);
-
-  if (!usersDB[targetUserId]) {
-    usersDB[targetUserId] = { id: targetUserId, name: "ተጫዋች", balance: 0, history: [] };
-  }
-
-  usersDB[targetUserId].balance += amount;
-
-  // ለተጫዋቹ App ባላንስ ወዲያውኑ ማዘመን
-  io.to(targetUserId).emit('balanceUpdated', usersDB[targetUserId].balance);
-  bot.sendMessage(ADMIN_ID, `✅ ለ ተጫዋች ID: ${targetUserId} የ ${amount} ETB Deposit ጸድቋል! አሁናዊ ባላንስ: ${usersDB[targetUserId].balance} ETB`);
-  bot.sendMessage(targetUserId, `🎉 ሂሳብዎ ላይ ${amount} ETB በ Admin ገቢ ሆኗል!`);
-});
-
-bot.onText(/\/start/, (msg) => {
-  const userId = String(msg.from.id);
-  const userName = msg.from.first_name || "ተጫዋች";
-
-  if (!usersDB[userId]) {
-    usersDB[userId] = { id: userId, name: userName, balance: 100.00, history: [] };
-  }
-
-  bot.sendMessage(msg.chat.id, `እንኳን ደህና መጡ ${userName}! 👋\n\n💰 ባላንስዎ: ${usersDB[userId].balance.toFixed(2)} ETB\n📱 ቴሌብር አድራሻ: ${TELEBIRR_NO}`, {
+// /start እና /play ትዕዛዞች ማስተካከያ
+const sendMainMenu = (chatId, userName) => {
+  bot.sendMessage(chatId, `እንኳን ደህና መጡ ${userName}! 👋\n\n🎮 Keno ለመጫወት ከታች ያለውን "Play Keno" ይጫኑ።\n📱 ቴሌብር አድራሻ: ${TELEBIRR_NO}`, {
     reply_markup: {
       inline_keyboard: [[{ text: "🎮 Play Keno", web_app: { url: WEB_APP_URL } }]]
     }
   });
+};
+
+bot.onText(/\/start/, (msg) => {
+  const userId = String(msg.from.id);
+  const userName = msg.from.first_name || "ተጫዋች";
+  if (!usersDB[userId]) usersDB[userId] = { id: userId, name: userName, balance: 100.00, history: [] };
+  sendMainMenu(msg.chat.id, userName);
+});
+
+bot.onText(/\/play/, (msg) => {
+  const userName = msg.from.first_name || "ተጫዋች";
+  sendMainMenu(msg.chat.id, userName);
+});
+
+bot.onText(/\/balance/, (msg) => {
+  const userId = String(msg.from.id);
+  const bal = usersDB[userId] ? usersDB[userId].balance : 100.00;
+  bot.sendMessage(msg.chat.id, `💰 **የአሁኑ ባላንስዎ፦** ${bal.toFixed(2)} ETB`);
+});
+
+// Admin Deposit
+bot.onText(/\/deposit_(\d+)_(\d+)/, (msg, match) => {
+  if (String(msg.chat.id) !== String(ADMIN_ID)) return;
+  const targetUserId = match[1];
+  const amount = parseFloat(match[2]);
+
+  if (!usersDB[targetUserId]) usersDB[targetUserId] = { id: targetUserId, name: "ተጫዋች", balance: 0, history: [] };
+  usersDB[targetUserId].balance += amount;
+
+  io.to(targetUserId).emit('balanceUpdated', usersDB[targetUserId].balance);
+  bot.sendMessage(ADMIN_ID, `✅ ለ ID: ${targetUserId} የ ${amount} ETB Deposit ጸድቋል!`);
+  bot.sendMessage(targetUserId, `🎉 ሂሳብዎ ላይ ${amount} ETB ገቢ ሆኗል!`);
 });
 
 // ⏱️ የሰዓት ቆጠራ
@@ -73,9 +92,7 @@ setInterval(() => {
   if (!isDrawing) {
     gameTimer--;
     io.emit('timerUpdate', gameTimer);
-    if (gameTimer <= 0) {
-      startKenoDraw();
-    }
+    if (gameTimer <= 0) startKenoDraw();
   }
 }, 1000);
 
@@ -95,7 +112,6 @@ function startKenoDraw() {
     drawnNumbers.push(rand);
     count++;
 
-    // ለሁሉም ተጫዋች በአንድ ጊዜ ቁጥሩን መላክ
     io.emit('newDrawnNumber', { number: rand, drawnList: drawnNumbers });
 
     if (count >= 20) {
@@ -110,7 +126,7 @@ function startKenoDraw() {
         io.emit('gameReset');
       }, 7000);
     }
-  }, 1500);
+  }, 1200);
 }
 
 function calculateWinnings() {
@@ -128,26 +144,15 @@ function calculateWinnings() {
       user.balance += winAmount;
     }
 
-    const historyItem = {
-      id: Date.now(),
-      numbers: ticket.numbers,
-      hits: hits,
-      bet: ticket.bet,
-      win: winAmount,
-      date: new Date().toLocaleTimeString()
-    };
-    user.history.unshift(historyItem);
-
     io.to(ticket.socketId).emit('ticketResult', {
       winAmount,
       hitsCount: hitCount,
-      userBalance: user.balance,
-      history: user.history
+      userBalance: user.balance
     });
   });
 }
 
-// Realtime Connections
+// Socket Connection
 io.on('connection', (socket) => {
   socket.on('registerUser', (tgUser) => {
     const userId = String(tgUser.id);
@@ -157,28 +162,20 @@ io.on('connection', (socket) => {
     socket.userId = userId;
     socket.join(userId);
 
-    // 📌 ዘግይቶ ለገባ ተጫዋች የወጡትን ቁጥሮች እና ወቅታዊ ሁኔታ መላክ
     socket.emit('userData', {
       user: usersDB[userId],
       activeTickets: activeTickets,
       timer: gameTimer,
       isDrawing: isDrawing,
-      drawnNumbers: drawnNumbers,
-      telebirr: TELEBIRR_NO
+      drawnNumbers: drawnNumbers
     });
   });
 
   socket.on('buyTicket', (data) => {
     const user = usersDB[data.userId];
     if (!user) return;
-
-    if (isDrawing) {
-      return socket.emit('errorMsg', 'ወደፊት የሚሄደው ጨዋታ እስኪያልቅ እባክዎን ይበቁ!');
-    }
-
-    if (user.balance < data.bet) {
-      return socket.emit('errorMsg', 'በቂ ባላንስ የለዎትም! እባክዎን Deposit ያድርጉ።');
-    }
+    if (isDrawing) return socket.emit('errorMsg', 'ጨዋታው ስለጀመረ ቀጣዩን ዙር ይበቁ!');
+    if (user.balance < data.bet) return socket.emit('errorMsg', 'በቂ ባላንስ የለዎትም!');
 
     user.balance -= data.bet;
 
@@ -192,36 +189,8 @@ io.on('connection', (socket) => {
     };
 
     activeTickets.push(newTicket);
-
-    io.emit('updateActiveTickets', activeTickets);
+    io.emit('updateActiveTickets', { tickets: activeTickets, drawnList: drawnNumbers });
     socket.emit('balanceUpdated', user.balance);
-  });
-
-  // 📥 Deposit ጥያቄ ለ Admin መላክ
-  socket.on('requestDeposit', (data) => {
-    const user = usersDB[data.userId];
-    bot.sendMessage(ADMIN_ID, 
-      `📥 **የDeposit ጥያቄ መጥቷል!**\n\n👤 ተጫዋች: ${user ? user.name : 'Unknown'}\n🆔 ID: \`${data.userId}\`\n💰 መጠን: ${data.amount} ETB\n📱 Transaction Ref: ${data.ref}\n\nለማጽደቅ ይህንን ይጫኑ፦\n/deposit_${data.userId}_${data.amount}`, 
-      { parse_mode: 'Markdown' }
-    );
-    socket.emit('infoMsg', 'የDeposit ጥያቄዎ ለ Admin ተልኳል! ሲጸድቅ ባላንስዎ ይጨመራል።');
-  });
-
-  // 📤 Withdraw ጥያቄ ለ Admin መላክ
-  socket.on('requestWithdraw', (data) => {
-    const user = usersDB[data.userId];
-    if (user && user.balance >= data.amount) {
-      user.balance -= data.amount;
-      socket.emit('balanceUpdated', user.balance);
-
-      bot.sendMessage(ADMIN_ID, 
-        `📤 **የWithdraw ጥያቄ!**\n\n👤 ተጫዋች: ${user.name}\n🆔 ID: \`${user.id}\`\n💰 መጠን: ${data.amount} ETB\n🏦 ስልክ/አካውንት: ${data.accountDetails}`,
-        { parse_mode: 'Markdown' }
-      );
-      socket.emit('infoMsg', 'የወጪ ጥያቄዎ ለ Admin ተልኳል።');
-    } else {
-      socket.emit('errorMsg', 'በቂ ባላንስ የለዎትም!');
-    }
   });
 });
 
