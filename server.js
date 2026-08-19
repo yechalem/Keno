@@ -74,7 +74,6 @@ bot.onText(/\/balance/, (msg) => {
   bot.sendMessage(msg.chat.id, `💰 የለዎትም ባላንስ፦ ${bal.toFixed(2)} ETB`);
 });
 
-// 📌 100% የተስተካከለው የ APPROVE COMMAND
 bot.onText(/\/deposit_(\d+)_(\d+(\.\d+)?)/, (msg, match) => {
   const senderId = String(msg.chat.id);
   if (senderId !== String(ADMIN_ID)) return;
@@ -86,21 +85,14 @@ bot.onText(/\/deposit_(\d+)_(\d+(\.\d+)?)/, (msg, match) => {
     usersDB[targetUserId] = { id: targetUserId, name: "ተጫዋች", balance: 0, history: [] };
   }
 
-  // ባላንስ መደመር
   usersDB[targetUserId].balance += amount;
   const newBalance = usersDB[targetUserId].balance;
 
-  // 1. ለ Web App በ Real-Time መላክ
   io.to(targetUserId).emit('balanceUpdated', newBalance);
-
-  // 2. ለ Admin ማረጋገጫ መላክ
   bot.sendMessage(ADMIN_ID, `✅ Deposit ጸድቋል!\n\n🆔 User ID: ${targetUserId}\n💵 የተደመረ: ${amount} ETB\n💰 አዲሱ ባላንስ: ${newBalance.toFixed(2)} ETB`);
-
-  // 3. ለተጫዋቹ በ Telegram መልእክት መላክ
   bot.sendMessage(targetUserId, `🎉 የ ${amount} ETB Deposit ጥያቄዎ ጸድቋል!\n\n💰 የአሁኑ ባላንስዎ፦ ${newBalance.toFixed(2)} ETB`);
 });
 
-// የሰዓት ቆጠራ (1 ደቂቃ)
 setInterval(() => {
   if (!isDrawing) {
     gameTimer--;
@@ -164,7 +156,6 @@ function calculateWinnings() {
   });
 }
 
-// Socket Connection
 io.on('connection', (socket) => {
   socket.on('registerUser', (tgUser) => {
     if (!tgUser || !tgUser.id) return;
@@ -204,6 +195,7 @@ io.on('connection', (socket) => {
       userName: user.name,
       numbers: data.numbers,
       bet: data.bet,
+      maxWin: data.maxWin,
       socketId: socket.id
     };
 
@@ -213,7 +205,6 @@ io.on('connection', (socket) => {
     socket.emit('ticketBoughtSuccess');
   });
 
-  // 📌 100% የተስተካከለው የ DEPOSIT REQUEST (Markdown Formatting ተወግዷል)
   socket.on('requestDeposit', (data) => {
     const userId = String(data.userId);
     const user = usersDB[userId];
