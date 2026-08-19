@@ -39,6 +39,10 @@ const PAYTABLE = {
   10: { 10: 25000, 9: 2000, 8: 400, 7: 50, 6: 10, 5: 2 }
 };
 
+// 🤖 የሮቦት ተጫዋቾች ስም ዝርዝር
+const BOT_NAMES = ["አበበ", "ማርታ", "ዳዊት", "ሰለሞን", "ሄለን", "ኪሩቤል", "ቲጂ", "ዮናስ", "እምነት", "በሬሳ"];
+const BET_OPTIONS = [5, 10, 20, 50, 100];
+
 bot.setMyCommands([
   { command: 'play', description: '🎮 Play Keno' },
   { command: 'start', description: '🔄 Restart Bot' },
@@ -96,10 +100,47 @@ bot.onText(/\/deposit_(\d+)_(\d+(\.\d+)?)/, (msg, match) => {
 setInterval(() => {
   if (!isDrawing) {
     gameTimer--;
+    
+    // 🤖 በየሰከንዱ አውቶማቲክ ተጫዋች (Robot Player) የመፍጠር logic
+    generateBotTickets();
+
     io.emit('timerUpdate', gameTimer);
     if (gameTimer <= 0) startKenoDraw();
   }
 }, 1000);
+
+// 📌 Robot Players አውቶማቲካሊ ቲኬት እንዲቆርጡ ማድረጊያ Function
+function generateBotTickets() {
+  // ሰዓቱ ከ 50 እስከ 10 ሰከንድ ባለው መካከል እና የቲኬት ብዛት ከ 6 ያነሰ ከሆነ ቦት ይጨምራል
+  if (gameTimer > 10 && gameTimer < 55 && activeTickets.length < 6) {
+    if (Math.random() < 0.25) { // 25% chance በየሰከንዱ
+      const randomName = BOT_NAMES[Math.floor(Math.random() * BOT_NAMES.length)];
+      const spotCount = Math.floor(Math.random() * 5) + 2; // ከ 2 እስከ 6 ቁጥሮች ይመርጣል
+      const numbers = [];
+
+      while (numbers.length < spotCount) {
+        const randNum = Math.floor(Math.random() * 80) + 1;
+        if (!numbers.includes(randNum)) numbers.push(randNum);
+      }
+
+      const bet = BET_OPTIONS[Math.floor(Math.random() * BET_OPTIONS.length)];
+      const maxWin = bet * (PAYTABLE[spotCount] && PAYTABLE[spotCount][spotCount] ? PAYTABLE[spotCount][spotCount] : 0);
+
+      const botTicket = {
+        id: Date.now() + Math.random(),
+        userId: "bot_" + Math.floor(Math.random() * 1000),
+        userName: randomName + " 🤖",
+        numbers: numbers,
+        bet: bet,
+        maxWin: maxWin,
+        socketId: null
+      };
+
+      activeTickets.push(botTicket);
+      io.emit('updateActiveTickets', activeTickets);
+    }
+  }
+}
 
 function startKenoDraw() {
   isDrawing = true;
@@ -135,6 +176,8 @@ function startKenoDraw() {
 
 function calculateWinnings() {
   activeTickets.forEach(ticket => {
+    if (!ticket.socketId) return; // ቦቶች ከሆኑ የለባቸውም
+
     const user = usersDB[ticket.userId];
     if (!user) return;
 
