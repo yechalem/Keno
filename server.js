@@ -26,6 +26,7 @@ let drawnNumbers = [];
 let isDrawing = false;
 let gameTimer = 60; 
 
+// 🎯 Paytable definition
 const PAYTABLE = {
   1: { 1: 3.5 },
   2: { 2: 10, 1: 1 },
@@ -39,9 +40,15 @@ const PAYTABLE = {
   10: { 10: 25000, 9: 2000, 8: 400, 7: 50, 6: 10, 5: 2 }
 };
 
-// 🤖 የሮቦት ተጫዋቾች ስም ዝርዝር
-const BOT_NAMES = ["አበበ", "ማርታ", "ዳዊት", "ሰለሞን", "ሄለን", "ኪሩቤል", "ቲጂ", "ዮናስ", "እምነት", "በሬሳ"];
-const BET_OPTIONS = [5, 10, 20, 50, 100];
+// 🤖 የእንግሊዝኛ እና የሀገር ውስጥ ስሞች የተቀላቀሉበት Fake Names ዝርዝር
+const BOT_NAMES = [
+  "Abebe", "Martha", "Daniel", "Dawit", "Helen", "Kirubel", "Tiji", "Yonas", "Solomon", "Eden",
+  "Alex", "Sami", "Michael", "Betelhem", "Robel", "Nati", "Feven", "Maki", "Aman", "Ruth",
+  "አበበ", "ማርታ", "ዳዊት", "ሰለሞን", "ሄለን", "ኪሩቤል", "ቲጂ", "ዮናስ", "እምነት", "በሬሳ", "ዮሴፍ", "ቃልኪዳን"
+];
+
+// 💵 የመደብ ብር ከ 5 እስከ 1000 ብር
+const BET_OPTIONS = [5, 10, 20, 50, 100, 200, 500, 1000];
 
 bot.setMyCommands([
   { command: 'play', description: '🎮 Play Keno' },
@@ -97,49 +104,79 @@ bot.onText(/\/deposit_(\d+)_(\d+(\.\d+)?)/, (msg, match) => {
   bot.sendMessage(targetUserId, `🎉 የ ${amount} ETB Deposit ጥያቄዎ ጸድቋል!\n\n💰 የአሁኑ ባላንስዎ፦ ${newBalance.toFixed(2)} ETB`);
 });
 
+// ⏱️ የጨዋታው Timer እና የ Fake Players ዝግጅት
 setInterval(() => {
   if (!isDrawing) {
     gameTimer--;
     
-    // 🤖 በየሰከንዱ አውቶማቲክ ተጫዋች (Robot Player) የመፍጠር logic
-    generateBotTickets();
+    // ጨዋታው ሲጀመር (ከ 55 ሰከንድ በላይ ሲሆን) Fake Players ያመነጫል
+    if (gameTimer >= 55 && activeTickets.length < 15) {
+      generateMassiveFakeTickets();
+    }
 
     io.emit('timerUpdate', gameTimer);
     if (gameTimer <= 0) startKenoDraw();
   }
 }, 1000);
 
-// 📌 Robot Players አውቶማቲካሊ ቲኬት እንዲቆርጡ ማድረጊያ Function
-function generateBotTickets() {
-  // ሰዓቱ ከ 50 እስከ 10 ሰከንድ ባለው መካከል እና የቲኬት ብዛት ከ 6 ያነሰ ከሆነ ቦት ይጨምራል
-  if (gameTimer > 10 && gameTimer < 55 && activeTickets.length < 6) {
-    if (Math.random() < 0.25) { // 25% chance በየሰከንዱ
-      const randomName = BOT_NAMES[Math.floor(Math.random() * BOT_NAMES.length)];
-      const spotCount = Math.floor(Math.random() * 5) + 2; // ከ 2 እስከ 6 ቁጥሮች ይመርጣል
-      const numbers = [];
+// 🤖 ከ 4,000 እስከ 30,000 የሚደርሱ Fake Players/Tickets ማፍሪያ
+function generateMassiveFakeTickets() {
+  // በዘነደብ ከ 4,000 እስከ 30,000 ቁጥር ያመነጫል
+  const totalFakeCount = Math.floor(Math.random() * (30000 - 4000 + 1)) + 4000;
+  
+  // ለ UI ማሳያ የሚሆኑ 20 የሚያህሉ በከፍተኛ ብር የተወራረዱ Fake Ticketዎች
+  const sampleTickets = [];
+  
+  for (let i = 0; i < 20; i++) {
+    const randomName = BOT_NAMES[Math.floor(Math.random() * BOT_NAMES.length)];
+    const spotCount = Math.floor(Math.random() * 6) + 2; // ከ 2 እስከ 7 ቁጥሮች
+    const numbers = [];
 
-      while (numbers.length < spotCount) {
-        const randNum = Math.floor(Math.random() * 80) + 1;
-        if (!numbers.includes(randNum)) numbers.push(randNum);
-      }
-
-      const bet = BET_OPTIONS[Math.floor(Math.random() * BET_OPTIONS.length)];
-      const maxWin = bet * (PAYTABLE[spotCount] && PAYTABLE[spotCount][spotCount] ? PAYTABLE[spotCount][spotCount] : 0);
-
-      const botTicket = {
-        id: Date.now() + Math.random(),
-        userId: "bot_" + Math.floor(Math.random() * 1000),
-        userName: randomName + " 🤖",
-        numbers: numbers,
-        bet: bet,
-        maxWin: maxWin,
-        socketId: null
-      };
-
-      activeTickets.push(botTicket);
-      io.emit('updateActiveTickets', activeTickets);
+    while (numbers.length < spotCount) {
+      const randNum = Math.floor(Math.random() * 80) + 1;
+      if (!numbers.includes(randNum)) numbers.push(randNum);
     }
+
+    const bet = BET_OPTIONS[Math.floor(Math.random() * BET_OPTIONS.length)];
+    const maxWin = bet * (PAYTABLE[spotCount] && PAYTABLE[spotCount][spotCount] ? PAYTABLE[spotCount][spotCount] : 2);
+
+    sampleTickets.push({
+      id: "bot_" + Date.now() + "_" + i,
+      userId: "bot_" + i,
+      userName: randomName,
+      numbers: numbers,
+      bet: bet,
+      maxWin: maxWin,
+      isBot: true,
+      socketId: null
+    });
   }
+
+  // Real users ያሏቸውን ትኬቶች ሳያጠፋ fakeዎችን ይጨምራል
+  const realUserTickets = activeTickets.filter(t => !t.isBot);
+  activeTickets = [...realUserTickets, ...sampleTickets];
+  
+  // 🔝 Sorting: 1. Real User ከላይ ይሁኑ 2. በከፍተኛ Bet/Win ብር ቅደም ተከተል
+  sortActiveTickets();
+
+  // ጠቅላላ የሰው ቁጥር (ከ 4,000 - 30,000) ለ Front-End እንዲላክ
+  io.emit('updateActiveTickets', {
+    tickets: activeTickets,
+    totalPlayersCount: totalFakeCount + realUserTickets.length
+  });
+}
+
+// 🔝 Sorting function: User Ticket Top ላይ እንዲሆንና የቀረው በ Bet መጠን እንዲደረደር
+function sortActiveTickets(currentUserId = null) {
+  activeTickets.sort((a, b) => {
+    if (currentUserId) {
+      if (a.userId === currentUserId) return -1;
+      if (b.userId === currentUserId) return 1;
+    }
+    if (!a.isBot && b.isBot) return -1;
+    if (a.isBot && !b.isBot) return 1;
+    return b.bet - a.bet; // በከፍተኛ ብር ቅደም ተከተል
+  });
 }
 
 function startKenoDraw() {
@@ -176,7 +213,7 @@ function startKenoDraw() {
 
 function calculateWinnings() {
   activeTickets.forEach(ticket => {
-    if (!ticket.socketId) return; // ቦቶች ከሆኑ የለባቸውም
+    if (ticket.isBot || !ticket.socketId) return;
 
     const user = usersDB[ticket.userId];
     if (!user) return;
@@ -211,6 +248,8 @@ io.on('connection', (socket) => {
     socket.userId = userId;
     socket.join(userId);
 
+    sortActiveTickets(userId);
+
     socket.emit('userData', {
       user: usersDB[userId],
       activeTickets: activeTickets,
@@ -239,11 +278,20 @@ io.on('connection', (socket) => {
       numbers: data.numbers,
       bet: data.bet,
       maxWin: data.maxWin,
+      isBot: false,
       socketId: socket.id
     };
 
     activeTickets.push(newTicket);
-    io.emit('updateActiveTickets', activeTickets);
+    
+    // User ticketን ከላይ ማድረግ
+    sortActiveTickets(user.id);
+
+    io.emit('updateActiveTickets', {
+      tickets: activeTickets,
+      totalPlayersCount: activeTickets.length + 15000 // Total fake players count
+    });
+
     socket.emit('balanceUpdated', user.balance);
     socket.emit('ticketBoughtSuccess');
   });
