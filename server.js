@@ -24,7 +24,7 @@ const usersDB = {};
 let activeTickets = [];   
 let drawnNumbers = [];    
 let isDrawing = false;
-let gameTimer = 30;
+let gameTimer = 60; // ⏱️ ጨዋታው በየ 1 ደቂቃው (60 ሰከንድ)
 
 const PAYTABLE = {
   1: { 1: 3.5 },
@@ -39,7 +39,6 @@ const PAYTABLE = {
   10: { 10: 25000, 9: 2000, 8: 400, 7: 50, 6: 10, 5: 2 }
 };
 
-// የቴሌግራም ሜኑ ማዋቀሪያ
 bot.setMyCommands([
   { command: 'play', description: '🎮 Play Keno' },
   { command: 'start', description: '🔄 Restart Bot' },
@@ -73,8 +72,8 @@ bot.onText(/\/balance/, (msg) => {
   bot.sendMessage(msg.chat.id, `💰 **የአሁኑ ባላንስዎ፦** ${bal.toFixed(2)} ETB`);
 });
 
-// Admin Deposit Command (/deposit_ID_AMOUNT)
-bot.onText(/\/deposit_(\d+)_(\d+)/, (msg, match) => {
+// 📌 Admin Deposit Approve ማድረጊያ - ባላንስ ወዲያውኑ እንዲደመር የተስተካከለ
+bot.onText(/\/deposit_(\d+)_(\d+(\.\d+)?)/, (msg, match) => {
   if (String(msg.chat.id) !== String(ADMIN_ID)) return;
   const targetUserId = match[1];
   const amount = parseFloat(match[2]);
@@ -82,12 +81,13 @@ bot.onText(/\/deposit_(\d+)_(\d+)/, (msg, match) => {
   if (!usersDB[targetUserId]) usersDB[targetUserId] = { id: targetUserId, name: "ተጫዋች", balance: 0, history: [] };
   usersDB[targetUserId].balance += amount;
 
+  // 📌 ለተጫዋቹ በ Socket እና በ Telegram አሳውቅ
   io.to(targetUserId).emit('balanceUpdated', usersDB[targetUserId].balance);
-  bot.sendMessage(ADMIN_ID, `✅ ለ ID: ${targetUserId} የ ${amount} ETB Deposit ጸድቋል!`);
-  bot.sendMessage(targetUserId, `🎉 ሂሳብዎ ላይ ${amount} ETB ገቢ ሆኗል!`);
+  bot.sendMessage(ADMIN_ID, `✅ ለ ID: ${targetUserId} የ ${amount} ETB Deposit ጸድቋል! የአሁኑ ባላንስ: ${usersDB[targetUserId].balance.toFixed(2)} ETB`);
+  bot.sendMessage(targetUserId, `🎉 ሂሳብዎ ላይ ${amount} ETB ገቢ ሆኗል! የአሁኑ ባላንስዎ: ${usersDB[targetUserId].balance.toFixed(2)} ETB`);
 });
 
-// ⏱️ የሰዓት ቆጠራ
+// ⏱️ የ 1 ደቂቃ (60s) የሰዓት ቆጠራ
 setInterval(() => {
   if (!isDrawing) {
     gameTimer--;
@@ -96,7 +96,6 @@ setInterval(() => {
   }
 }, 1000);
 
-// 🎲 የእጣ ማውጣት ሂደት
 function startKenoDraw() {
   isDrawing = true;
   drawnNumbers = [];
@@ -118,13 +117,14 @@ function startKenoDraw() {
       clearInterval(interval);
       calculateWinnings();
 
+      // 📌 የወጣውን ቁጥር አረጋግጦ ለማየት 3 ሰከንድ ብቻ ጠብቆ Clear በማድረግ ቀጣዩን ጨዋታ ይጀምራል
       setTimeout(() => {
         isDrawing = false;
-        gameTimer = 30;
+        gameTimer = 60;
         drawnNumbers = [];
         activeTickets = [];
         io.emit('gameReset');
-      }, 7000);
+      }, 3000);
     }
   }, 1200);
 }
@@ -152,7 +152,6 @@ function calculateWinnings() {
   });
 }
 
-// WebSocket ግንኙነቶች
 io.on('connection', (socket) => {
   socket.on('registerUser', (tgUser) => {
     const userId = String(tgUser.id);
@@ -174,7 +173,11 @@ io.on('connection', (socket) => {
   socket.on('buyTicket', (data) => {
     const user = usersDB[data.userId];
     if (!user) return;
-    if (isDrawing) return socket.emit('errorMsg', 'ጨዋታው ስለጀመረ ቀጣዩን ዙር ይበቁ!');
+
+    // 📌 ጨዋታው ከጀመረ ወይም 1 ሰከንድ ሲቀረው ትኬት መቁረጥ ይከለክላል
+    if (isDrawing || gameTimer <= 1) {
+      return socket.emit('errorMsg', 'ጨዋታው ሊጀምር ስለሆነ ትኬት መቁረጥ ተዘግቷል! ቀጣዩን ዙር ይበቁ።');
+    }
     if (user.balance < data.bet) return socket.emit('errorMsg', 'በቂ ባላንስ የለዎትም! እባክዎን Deposit ያድርጉ።');
 
     user.balance -= data.bet;
@@ -189,7 +192,6 @@ io.on('connection', (socket) => {
     };
 
     activeTickets.push(newTicket);
-    // 📌 ለሁሉም ተጫዋች አዲሱን ቲኬት ወዲያውኑ መላክ
     io.emit('updateActiveTickets', activeTickets);
     socket.emit('balanceUpdated', user.balance);
   });
@@ -197,7 +199,7 @@ io.on('connection', (socket) => {
   socket.on('requestDeposit', (data) => {
     const user = usersDB[data.userId];
     bot.sendMessage(ADMIN_ID, 
-      `📥 **የDeposit ጥያቄ!**\n\n👤 ተጫዋች: ${user ? user.name : 'Unknown'}\n🆔 ID: \`${data.userId}\`\n💰 መጠን: ${data.amount} ETB\n📱 Ref: ${data.ref}\n\nለማጽደቅ፦\n/deposit_${data.userId}_${data.amount}`, 
+      `📥 **የDeposit ጥያቄ!**\n\n👤 ተጫዋች: ${user ? user.name : 'Unknown'}\n🆔 ID: \`${data.userId}\`\n💰 መጠን: ${data.amount} ETB\n📱 Ref: ${data.ref}\n\nለማጽደቅ ይህን ይጫኑ፦\n/deposit_${data.userId}_${data.amount}`, 
       { parse_mode: 'Markdown' }
     );
     socket.emit('infoMsg', 'የDeposit ጥያቄዎ ለ Admin ተልኳል!');
