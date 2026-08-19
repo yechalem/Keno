@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="am">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Keno Game</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background-color: #121824;
+      color: #ffffff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 15px;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 15px;
+    }
+
+    .header h1 {
+      color: #0088cc;
+      font-size: 24px;
+    }
+
+    .stats-bar {
+      display: flex;
+      justify-content: space-between;
+      width: 100%;
+      max-width: 400px;
+      background: #1e293b;
+      padding: 10px 15px;
+      border-radius: 10px;
+      margin-bottom: 15px;
+      font-size: 14px;
+    }
+
+    .grid-container {
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      gap: 6px;
+      width: 100%;
+      max-width: 400px;
+      background: #1e293b;
+      padding: 12px;
+      border-radius: 12px;
+    }
+
+    .number-btn {
+      background: #0f172a;
+      border: 1px solid #334155;
+      color: #fff;
+      padding: 10px 0;
+      border-radius: 6px;
+      font-weight: bold;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .number-btn.selected {
+      background: #f59e0b;
+      color: #000;
+      border-color: #f59e0b;
+    }
+
+    .controls {
+      width: 100%;
+      max-width: 400px;
+      margin-top: 15px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .stake-options {
+      display: flex;
+      justify-content: space-between;
+      gap: 5px;
+    }
+
+    .stake-btn {
+      flex: 1;
+      padding: 8px;
+      background: #334155;
+      border: none;
+      color: white;
+      border-radius: 6px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    .stake-btn.active {
+      background: #10b981;
+    }
+
+    .action-btns {
+      display: flex;
+      gap: 10px;
+    }
+
+    .btn {
+      flex: 1;
+      padding: 12px;
+      border: none;
+      border-radius: 8px;
+      font-weight: bold;
+      font-size: 16px;
+      cursor: pointer;
+    }
+
+    .btn-clear { background: #ef4444; color: white; }
+    .btn-auto { background: #6366f1; color: white; }
+    .btn-play { background: #10b981; color: white; width: 100%; margin-top: 5px; }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <h1>🎲 ADDIS KENO</h1>
+  </div>
+
+  <div class="stats-bar">
+    <div>የመረጡት: <span id="selected-count" style="color:#f59e0b;">0</span>/10</div>
+    <div>መደብ: <span id="stake-amount" style="color:#10b981;">10</span> ETB</div>
+  </div>
+
+  <!-- 1-80 Grid -->
+  <div class="grid-container" id="keno-grid"></div>
+
+  <div class="controls">
+    <div class="stake-options">
+      <button class="stake-btn active" onclick="setStake(10)">10 ETB</button>
+      <button class="stake-btn" onclick="setStake(20)">20 ETB</button>
+      <button class="stake-btn" onclick="setStake(50)">50 ETB</button>
+      <button class="stake-btn" onclick="setStake(100)">100 ETB</button>
+    </div>
+
+    <div class="action-btns">
+      <button class="btn btn-clear" onclick="clearSelection()">አፅዳ</button>
+      <button class="btn btn-auto" onclick="autoPick()">በራሱ ምረጥ</button>
+    </div>
+
+    <button class="btn btn-play" onclick="playGame()">መድብ (PLAY)</button>
+  </div>
+
+  <script>
+    const tg = window.Telegram.WebApp;
+    tg.expand(); // WebApp ሙሉ ስክሪን እንዲሆን
+
+    let selectedNumbers = [];
+    let currentStake = 10;
+
+    // Grid መፍጠሪያ (1 - 80)
+    const grid = document.getElementById('keno-grid');
+    for (let i = 1; i <= 80; i++) {
+      const btn = document.createElement('button');
+      btn.className = 'number-btn';
+      btn.innerText = i;
+      btn.onclick = () => toggleNumber(i, btn);
+      grid.appendChild(btn);
+    }
+
+    function toggleNumber(num, btn) {
+      if (selectedNumbers.includes(num)) {
+        selectedNumbers = selectedNumbers.filter(n => n !== num);
+        btn.classList.remove('selected');
+      } else {
+        if (selectedNumbers.length >= 10) {
+          tg.showAlert("ከ 10 ቁጥር በላይ መምረጥ አይችሉም!");
+          return;
+        }
+        selectedNumbers.push(num);
+        btn.classList.add('selected');
+      }
+      document.getElementById('selected-count').innerText = selectedNumbers.length;
+    }
+
+    function setStake(amount) {
+      currentStake = amount;
+      document.getElementById('stake-amount').innerText = amount;
+      document.querySelectorAll('.stake-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.innerText.includes(amount));
+      });
+    }
+
+    function clearSelection() {
+      selectedNumbers = [];
+      document.getElementById('selected-count').innerText = 0;
+      document.querySelectorAll('.number-btn').forEach(btn => btn.classList.remove('selected'));
+    }
+
+    function autoPick() {
+      clearSelection();
+      while (selectedNumbers.length < 10) {
+        const rand = Math.floor(Math.random() * 80) + 1;
+        if (!selectedNumbers.includes(rand)) {
+          selectedNumbers.push(rand);
+        }
+      }
+      const buttons = document.querySelectorAll('.number-btn');
+      selectedNumbers.forEach(num => buttons[num - 1].classList.add('selected'));
+      document.getElementById('selected-count').innerText = 10;
+    }
+
+    function playGame() {
+      if (selectedNumbers.length === 0) {
+        tg.showAlert("እባክዎንቢያንስ 1 ቁጥር ይምረጡ!");
+        return;
+      }
+      
+      // መረጃውን ወደ Telegram Bot መላክ
+      const gameData = {
+        numbers: selectedNumbers,
+        stake: currentStake
+      };
+      
+      tg.sendData(JSON.stringify(gameData));
+    }
+  </script>
+</body>
+</html>
