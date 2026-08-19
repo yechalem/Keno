@@ -128,7 +128,7 @@ function startKenoDraw() {
         drawnNumbers = [];
         activeTickets = [];
         io.emit('gameReset');
-      }, 3000);
+      }, 4000);
     }
   }, 1200);
 }
