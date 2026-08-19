@@ -20,7 +20,6 @@ bot.on("polling_error", (err) => {
   }
 });
 
-// Database
 const usersDB = {};       
 let activeTickets = [];   
 let drawnNumbers = [];    
@@ -72,18 +71,17 @@ bot.onText(/\/play/, (msg) => {
 bot.onText(/\/balance/, (msg) => {
   const userId = String(msg.from.id);
   const bal = usersDB[userId] ? usersDB[userId].balance : 0.00;
-  bot.sendMessage(msg.chat.id, `💰 **የአሁኑ ባላንስዎ፦** ${bal.toFixed(2)} ETB`);
+  bot.sendMessage(msg.chat.id, `💰 የለዎትም ባላንስ፦ ${bal.toFixed(2)} ETB`);
 });
 
-// 📌 100% የተስተካከለው የ Admin Approve Command
+// 📌 100% የተስተካከለው የ APPROVE COMMAND
 bot.onText(/\/deposit_(\d+)_(\d+(\.\d+)?)/, (msg, match) => {
   const senderId = String(msg.chat.id);
   if (senderId !== String(ADMIN_ID)) return;
 
-  const targetUserId = String(match[1]); // ID ን በ String ብቻ መያዝ
+  const targetUserId = String(match[1]);
   const amount = parseFloat(match[2]);
 
-  // ተጫዋቹ ከዚህ በፊት ከሌለ መፍጠር
   if (!usersDB[targetUserId]) {
     usersDB[targetUserId] = { id: targetUserId, name: "ተጫዋች", balance: 0, history: [] };
   }
@@ -92,16 +90,14 @@ bot.onText(/\/deposit_(\d+)_(\d+(\.\d+)?)/, (msg, match) => {
   usersDB[targetUserId].balance += amount;
   const newBalance = usersDB[targetUserId].balance;
 
-  console.log(`[DEPOSIT SUCCESS] User: ${targetUserId} | Added: ${amount} | New Balance: ${newBalance}`);
-
   // 1. ለ Web App በ Real-Time መላክ
   io.to(targetUserId).emit('balanceUpdated', newBalance);
 
   // 2. ለ Admin ማረጋገጫ መላክ
-  bot.sendMessage(ADMIN_ID, `✅ **Deposit ተሳክቷል!**\n\n🆔 User ID: \`${targetUserId}\`\n💵 የተደመረ: ${amount} ETB\n💰 አዲሱ ባላንስ: ${newBalance.toFixed(2)} ETB`, { parse_mode: 'Markdown' });
+  bot.sendMessage(ADMIN_ID, `✅ Deposit ጸድቋል!\n\n🆔 User ID: ${targetUserId}\n💵 የተደመረ: ${amount} ETB\n💰 አዲሱ ባላንስ: ${newBalance.toFixed(2)} ETB`);
 
   // 3. ለተጫዋቹ በ Telegram መልእክት መላክ
-  bot.sendMessage(targetUserId, `🎉 **የ ${amount} ETB Deposit ጥያቄዎ ጸድቋል!**\n\n💰 የአሁኑ ባላንስዎ፦ ${newBalance.toFixed(2)} ETB`);
+  bot.sendMessage(targetUserId, `🎉 የ ${amount} ETB Deposit ጥያቄዎ ጸድቋል!\n\n💰 የአሁኑ ባላንስዎ፦ ${newBalance.toFixed(2)} ETB`);
 });
 
 // የሰዓት ቆጠራ (1 ደቂቃ)
@@ -179,7 +175,7 @@ io.on('connection', (socket) => {
     }
     
     socket.userId = userId;
-    socket.join(userId); // ክፍሉን ከ ID ጋር ማገናኘት
+    socket.join(userId);
 
     socket.emit('userData', {
       user: usersDB[userId],
@@ -217,13 +213,14 @@ io.on('connection', (socket) => {
     socket.emit('ticketBoughtSuccess');
   });
 
+  // 📌 100% የተስተካከለው የ DEPOSIT REQUEST (Markdown Formatting ተወግዷል)
   socket.on('requestDeposit', (data) => {
     const userId = String(data.userId);
     const user = usersDB[userId];
-    bot.sendMessage(ADMIN_ID, 
-      `📥 **የDeposit ጥያቄ!**\n\n👤 ተጫዋች: ${user ? user.name : 'Unknown'}\n🆔 ID: \`${userId}\`\n💰 መጠን: ${data.amount} ETB\n📱 Ref: ${data.ref}\n\nለማጽደቅ ከታች ያለውን ይጫኑ፦\n/deposit_${userId}_${data.amount}`, 
-      { parse_mode: 'Markdown' }
-    );
+    
+    const msgText = `📥 የDeposit ጥያቄ!\n\n👤 ተጫዋች: ${user ? user.name : 'Unknown'}\n🆔 ID: ${userId}\n💰 መጠን: ${data.amount} ETB\n📱 Ref: ${data.ref}\n\nለማጽደቅ ከታች ያለውን ይጫኑ፦\n/deposit_${userId}_${data.amount}`;
+    
+    bot.sendMessage(ADMIN_ID, msgText);
     socket.emit('infoMsg', 'የDeposit ጥያቄዎ ለ Admin ተልኳል!');
   });
 
@@ -233,10 +230,9 @@ io.on('connection', (socket) => {
     if (user && user.balance >= data.amount) {
       user.balance -= data.amount;
       socket.emit('balanceUpdated', user.balance);
-      bot.sendMessage(ADMIN_ID, 
-        `📤 **የWithdraw ጥያቄ!**\n\n👤 ተጫዋች: ${user.name}\n🆔 ID: \`${user.id}\`\n💰 መጠን: ${data.amount} ETB\n🏦 አካውንት: ${data.accountDetails}`,
-        { parse_mode: 'Markdown' }
-      );
+      
+      const msgText = `📤 የWithdraw ጥያቄ!\n\n👤 ተጫዋች: ${user ? user.name : 'Unknown'}\n🆔 ID: ${user ? user.id : userId}\n💰 መጠን: ${data.amount} ETB\n🏦 አካውንት: ${data.accountDetails}`;
+      bot.sendMessage(ADMIN_ID, msgText);
       socket.emit('infoMsg', 'የወጪ ጥያቄዎ ለ Admin ተልኳል።');
     } else {
       socket.emit('errorMsg', 'በቂ ባላንስ የለዎትም!');
