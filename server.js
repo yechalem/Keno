@@ -13,18 +13,14 @@ const io = new Server(server, {
     cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
-// Environment Variable ወይም ቀጥታ ማስገባት
 const BOT_TOKEN = process.env.BOT_TOKEN || "8707515963:AAEyGvW6EBngaucnqJkxx1iTERTvZ9U2T8E";
-const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || "686733543"; // የአንተ Admin ID
+const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || "686733543"; 
 const WEB_APP_URL = "https://tiny-dasik-98c906.netlify.app";
 
-// Telegram Bot ማስጀመር
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
-// Shared Database (በ Keno፣ Bingo እና Telegram Bot በጋራ የሚያገለግል)
 const usersDb = {}; 
 
-// የቢንጎ ጨዋታ ሩም ሁኔታ
 let bingoRoom = {
     takenCards: [],
     playersCount: 0,
@@ -35,19 +31,8 @@ let bingoRoom = {
 // 1. TELEGRAM BOT LOGIC
 // ==========================================
 
-// /start ትዕዛዝ ሲላክ
-bot.onText(/\/start/, (msg) => {
-    const chatId = msg.chat.id;
-    const userId = String(msg.from.id);
-    const firstName = msg.from.first_name || "Player";
-
-    // ተጠቃሚውን በ Shared Database ውስጥ መመዝገብ
-    if (!usersDb[userId]) {
-        usersDb[userId] = { id: userId, first_name: firstName, balance: 0.00 };
-    }
-
+const sendMainMenu = (chatId, firstName) => {
     const welcomeText = `እንኳን ወደ ጨዋታችን በደህና መጡ ${firstName}! የሚፈልጉትን አማራጭ ይምረጡ።`;
-
     const options = {
         reply_markup: {
             inline_keyboard: [
@@ -69,16 +54,65 @@ bot.onText(/\/start/, (msg) => {
             ]
         }
     };
-
     bot.sendMessage(chatId, welcomeText, options);
+};
+
+// /start እና /play ሲላኩ የሚሰጠው ምላሽ
+bot.onText(/\/(start|play)/, (msg) => {
+    const chatId = msg.chat.id;
+    const userId = String(msg.from.id);
+    const firstName = msg.from.first_name || "Player";
+
+    if (!usersDb[userId]) {
+        usersDb[userId] = { id: userId, first_name: firstName, balance: 0.00 };
+    }
+
+    sendMainMenu(chatId, firstName);
 });
 
-// የአዝራሮቹ ምላሽ (Callback Queries)
+// Admin እና User አዝራሮች (Callback Queries)
 bot.on("callback_query", (query) => {
     const chatId = query.message.chat.id;
     const userId = String(query.from.id);
     const data = query.data;
 
+    // --- ADMIN APPROVAL LOGIC ---
+    if (data.startsWith("approve_")) {
+        const [_, targetUserId, amount] = data.split("_");
+        const depositAmount = parseFloat(amount);
+
+        if (!usersDb[targetUserId]) {
+            usersDb[targetUserId] = { id: targetUserId, first_name: "Player", balance: 0.00 };
+        }
+
+        // ባላንስ መደመር
+        usersDb[targetUserId].balance += depositAmount;
+
+        // ለ Admin ማረጋገጫ መላክ
+        bot.editMessageText(query.message.text + `\n\n✅ **ተጸድቋል!** (${depositAmount} ETB ተጨምሯል)`, {
+            chat_id: chatId,
+            message_id: query.message.message_id
+        });
+
+        // ለተጠቃሚው ማሳወቅ
+        bot.sendMessage(targetUserId, `✅ <b>የገቢ ጥያቄዎ ጸድቋል!</b>\n\n💰 የተጨመረ: ${depositAmount} ETB\n💳 አሁናዊ ባላንስ: ${usersDb[targetUserId].balance.toFixed(2)} ETB`, { parse_mode: "HTML" });
+
+        // WebApp ላይ ባላንስ ማዘመን
+        io.emit("balanceUpdated", { userId: targetUserId, balance: usersDb[targetUserId].balance });
+        return bot.answerCallbackQuery(query.id);
+    }
+
+    if (data.startsWith("reject_")) {
+        const [_, targetUserId] = data.split("_");
+        bot.editMessageText(query.message.text + `\n\n❌ **ጥያቄው ተሰርዟል (Rejected)!**`, {
+            chat_id: chatId,
+            message_id: query.message.message_id
+        });
+        bot.sendMessage(targetUserId, `❌ የገቢ ጥያቄዎ አልፀደቀም። እባክዎን አድሚንን ያነጋግሩ።`);
+        return bot.answerCallbackQuery(query.id);
+    }
+
+    // --- USER BUTTON LOGIC ---
     if (!usersDb[userId]) {
         usersDb[userId] = { id: userId, first_name: query.from.first_name || "Player", balance: 0.00 };
     }
@@ -105,8 +139,6 @@ bot.on("callback_query", (query) => {
 // ==========================================
 
 io.on("connection", (socket) => {
-    console.log("Web App client connected:", socket.id);
-
     socket.on("registerUser", (userData) => {
         const userId = String(userData.id);
         socket.userId = userId;
@@ -147,7 +179,7 @@ io.on("connection", (socket) => {
         bingoRoom.activePlayers[uId] = cardId;
         bingoRoom.playersCount = Object.keys(bingoRoom.activePlayers).length;
 
-        socket.emit("balanceUpdated", user.balance);
+        socket.emit("balanceUpdated", { balance: user.balance });
 
         io.emit("cardTaken", { cardId: cardId });
         io.emit("updatePlayers", bingoRoom.playersCount);
@@ -160,7 +192,19 @@ io.on("connection", (socket) => {
 
         const adminMsg = `📥 <b>አዲስ የገቢ (Deposit) ጥያቄ</b>\n\n👤 <b>ስም:</b> ${user?.first_name || 'Unkown'}\n🆔 <b>ID:</b> <code>${uId}</code>\n💰 <b>መጠን:</b> ${amount} ETB\n📱 <b>SMS መልእክት:</b>\n<code>${smsText}</code>`;
 
-        bot.sendMessage(ADMIN_CHAT_ID, adminMsg, { parse_mode: "HTML" });
+        const options = {
+            parse_mode: "HTML",
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: "✅ Approve (አጽድቅ)", callback_data: `approve_${uId}_${amount}` },
+                        { text: "❌ Reject (ሰርዝ)", callback_data: `reject_${uId}` }
+                    ]
+                ]
+            }
+        };
+
+        bot.sendMessage(ADMIN_CHAT_ID, adminMsg, options);
         socket.emit("infoMsg", "የገቢ ጥያቄዎ ለአድሚን ተልኳል። ሲረጋገጥ ባላንስዎ ይስተካከላል!");
     });
 
@@ -174,38 +218,13 @@ io.on("connection", (socket) => {
         }
 
         user.balance -= parseFloat(amount);
-        socket.emit("balanceUpdated", user.balance);
+        socket.emit("balanceUpdated", { balance: user.balance });
 
         const adminMsg = `📤 <b>አዲስ የወጪ (Withdraw) ጥያቄ</b>\n\n👤 <b>ስም:</b> ${user.first_name}\n🆔 <b>ID:</b> <code>${uId}</code>\n💰 <b>መጠን:</b> ${amount} ETB\n💳 <b>አካውንት:</b> ${accountDetails}`;
 
         bot.sendMessage(ADMIN_CHAT_ID, adminMsg, { parse_mode: "HTML" });
         socket.emit("infoMsg", "የወጪ ጥያቄዎ ተልኳል፤ በቅርቡ ገቢ ይደረጋል!");
     });
-
-    socket.on("disconnect", () => {
-        console.log("Client disconnected:", socket.id);
-    });
-});
-
-// ==========================================
-// 3. ADMIN API (ለገንዘብ ማጽደቂያ)
-// ==========================================
-
-app.post("/admin/approve-deposit", (req, res) => {
-    const { userId, amount } = req.body;
-    const uId = String(userId);
-
-    if (usersDb[uId]) {
-        usersDb[uId].balance += parseFloat(amount);
-
-        bot.sendMessage(uId, `✅ <b>የገቢ ጥያቄዎ ጸድቋል!</b>\n\n💰 የተጨመረ: ${amount} ETB\n💳 አሁናዊ ባላንስ: ${usersDb[uId].balance.toFixed(2)} ETB`, { parse_mode: "HTML" });
-
-        io.emit("balanceUpdated", usersDb[uId].balance);
-
-        res.json({ success: true, newBalance: usersDb[uId].balance });
-    } else {
-        res.status(404).json({ error: "User not found" });
-    }
 });
 
 const PORT = process.env.PORT || 3000;
