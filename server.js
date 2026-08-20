@@ -25,7 +25,7 @@ let activeTickets = [];
 let drawnNumbers = [];    
 let isDrawing = false;
 let gameTimer = 60; 
-let currentFakePlayerCount = 3150; // ቢያንስ በ 3,000+ ይጀምራል
+let currentFakePlayerCount = 3200; // ቢያንስ በ 3,200 ይጀምራል
 
 const PAYTABLE = {
   1: { 1: 3.5 },
@@ -40,14 +40,13 @@ const PAYTABLE = {
   10: { 10: 25000, 9: 2000, 8: 400, 7: 50, 6: 10, 5: 2 }
 };
 
-// 👨 90% የወንድ ስሞች ዝርዝር
+// 90% የወንድ ስሞች + 10% የሴት ስሞች
 const MALE_NAMES = [
   "Abebe", "Dawit", "Daniel", "Kirubel", "Yonas", "Solomon", "Alex", "Sami", "Michael", "Robel",
   "Nati", "Aman", "Ermias", "Henok", "Yosef", "Kibrom", "Binyam", "Abel", "Tewodros", "Kaleb",
   "አበበ", "ዳዊት", "ሰለሞን", "ኪሩቤል", "ዮናስ", "በሬሳ", "ዮሴፍ", "አማኑኤል", "ኤርሚያስ", "ሄኖክ", "ካሌብ", "ናታን"
 ];
 
-// 👩 10% የሴት ስሞች ዝርዝር
 const FEMALE_NAMES = [
   "Martha", "Helen", "Tiji", "Eden", "Betelhem", "Feven", "Maki", "Ruth",
   "ማርታ", "ሄለን", "ቲጂ", "ቃልኪዳን", "እምነት"
@@ -115,22 +114,22 @@ bot.onText(/\/deposit_(\d+)_(\d+(\.\d+)?)/, (msg, match) => {
   bot.sendMessage(targetUserId, `🎉 የ ${amount} ETB Deposit ጥያቄዎ ጸድቋል!\n\n💰 የአሁኑ ባላንስዎ፦ ${newBalance.toFixed(2)} ETB`);
 });
 
-// ⏱️ በየሰከንዱ ተጫዋች መጨመሪያ Logic (Reload ሳይባል)
+// ⏱️ በየሰከንዱ ተጫዋቾች እና ትኬቶች እንዲጨምሩ የሚያደርግ ሎጂክ
 setInterval(() => {
   if (!isDrawing) {
     gameTimer--;
 
-    // 1. በየሰከንዱ ከ 20 እስከ 60 አዳዲስ Fake Players መጨመር
-    currentFakePlayerCount += Math.floor(Math.random() * 40) + 20;
+    // በየሰከንዱ ከ 10 እስከ 35 አዳዲስ ተጫዋቾች ይጨምራሉ
+    currentFakePlayerCount += Math.floor(Math.random() * 25) + 10;
 
-    // 2. በየሰከንዱ አዲስ Fake Ticket ማፍራት
+    // አዲስ Fake Ticket ማፍራት
     addNewFakeTicket();
 
-    // 3. Real-Time መረጃዎችን ለሁሉም ብራውዘር መላክ (Reload አይጠይቅም)
-    io.emit('timerUpdate', gameTimer);
-    io.emit('updateActiveTickets', {
+    // መረጃውን ያለ ሬሎድ ለሁሉም ብራውዘር መላክ
+    io.emit('updateLiveStats', {
       tickets: activeTickets,
-      totalPlayersCount: currentFakePlayerCount
+      totalPlayersCount: currentFakePlayerCount,
+      timer: gameTimer
     });
 
     if (gameTimer <= 0) startKenoDraw();
@@ -163,11 +162,10 @@ function addNewFakeTicket() {
 
   activeTickets.push(fakeTicket);
 
-  // ስክሪኑ ላይ ከ 25 በላይ እንዳይከበድ አሮጌዎቹን ማስወገድ
-  if (activeTickets.length > 25) {
+  if (activeTickets.length > 30) {
     const realUsers = activeTickets.filter(t => !t.isBot);
     const botsOnly = activeTickets.filter(t => t.isBot);
-    activeTickets = [...realUsers, ...botsOnly.slice(-20)];
+    activeTickets = [...realUsers, ...botsOnly.slice(-25)];
   }
 
   sortActiveTickets();
@@ -211,7 +209,7 @@ function startKenoDraw() {
         gameTimer = 60;
         drawnNumbers = [];
         activeTickets = [];
-        currentFakePlayerCount = Math.floor(Math.random() * 1500) + 3000; // በየጨዋታው በ 3,000+ ይጀምራል
+        currentFakePlayerCount = Math.floor(Math.random() * 1000) + 3200; 
         io.emit('gameReset');
       }, 4000);
     }
@@ -293,9 +291,10 @@ io.on('connection', (socket) => {
     activeTickets.push(newTicket);
     sortActiveTickets(user.id);
 
-    io.emit('updateActiveTickets', {
+    io.emit('updateLiveStats', {
       tickets: activeTickets,
-      totalPlayersCount: currentFakePlayerCount + 1
+      totalPlayersCount: currentFakePlayerCount + 1,
+      timer: gameTimer
     });
 
     socket.emit('balanceUpdated', user.balance);
