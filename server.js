@@ -1,70 +1,87 @@
-const TelegramBot = require('node-telegram-bot-api');
-const axios = require('axios'); // ከሰርቨራችን ጋር ለመነጋገር (npm install axios ያስፈልጋል)
+const http = require('http');
+const { Server } = require('socket.io');
 
-// የቦት ቶከንዎን እዚህ ያስገቡ
-const TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN';
-const bot = new TelegramBot(TOKEN, { polling: true });
-
-// የሰርቨርዎ ሊንክ (Render ላይ ያስቀመጡት የ Backend ሊንክ)
-const SERVER_URL = 'https://bk-gbd9.onrender.com';
-
-// /start ትዕዛዝ ሲላክ (የጠየቁትን ቅርጽ ሙሉ በሙሉ የጠበቀ)
-bot.onText(/\/start/, (msg) => {
-  const chatId = msg.chat.id;
-  const welcomeText = "Welcome to your bot! Choose an option below.";
-
-  const options = {
-    reply_markup: {
-      inline_keyboard: [
-        [
-          { text: "🎮 Play", web_app: { url: "https://tiny-dasik-98c906.netlify.app" } },
-          { text: "👤 Register", callback_data: "register" }
-        ],
-        [
-          { text: "💰 Check Balance", callback_data: "balance" },
-          { text: "💸 Deposit", callback_data: "deposit" }
-        ],
-        [
-          { text: "🚨 Contact support", url: "https://t.me/YOUR_ADMIN_USERNAME" },
-          { text: "💬 Instruction", callback_data: "instruction" }
-        ]
-      ]
-    }
-  };
-
-  bot.sendMessage(chatId, welcomeText, options);
+const server = http.createServer();
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
 });
 
-// የአዝራሮቹ ምላሽ (Callback Queries)
-bot.on('callback_query', async (query) => {
-  const chatId = query.message.chat.id;
-  const userId = query.from.id;
-  const data = query.data;
+// 1. የተመዘገቡ ተጫዋቾችን መያዣ (In-memory storage)
+// { "tg_user_id": { id: "...", name: "...", balance: 100, socketId: "..." } }
+const registeredUsers = {};
 
-  if (data === 'balance') {
-    try {
-      // ከሰርቨር ላይ የተጠቃሚውን ትክክለኛ ባላንስ ማምጣት
-      const response = await axios.get(`${SERVER_URL}/api/user/${userId}`);
-      const balance = response.data ? response.data.balance : 0.00;
-      bot.sendMessage(chatId, `💰 የሒሳብዎ መጠን: ${balance.toFixed(2)} ETB`);
-    } catch (error) {
-      // ሰርቨር ላይ ካልተመዘገበ በነባሪ 0.00 ያሳያል
-      bot.sendMessage(chatId, "💰 የሒሳብዎ መጠን: 0.00 ETB");
+// 2. ተጫዋቾች የያዟቸውን የቢንጎ ቁጥሮች/ካርዶች መያዣ
+// { "tg_user_id": { numbers: [5, 12, 23, ...], bet: 20 } }
+const playerSelections = {};
+
+io.on('connection', (socket) => {
+  console.log('አዲስ ግንኙነት:', socket.id);
+
+  // 📌 1. ተጫዋች በ Telegram ID ሲመዘገብ ወይም ሲገባ
+  socket.on('registerUser', (userData) => {
+    if (!userData || !userData.id) return;
+
+    const tgId = String(userData.id);
+
+    // ተጫዋቹ ቀደም ሲል ካልተመዘገበ በአዲስ መዝግብ
+    if (!registeredUsers[tgId]) {
+      registeredUsers[tgId] = {
+        id: tgId,
+        name: userData.first_name || "ተጫዋች",
+        balance: 100.00, // የመጀመሪያ ቦነስ/ባላንስ
+        socketId: socket.id
+      };
+    } else {
+      // ተመልሶ ከገባ Socket ID ውን ብቻ አድስ
+      registeredUsers[tgId].socketId = socket.id;
     }
-  } else if (data === 'deposit') {
-    bot.sendMessage(chatId, "📥 ገንዘብ ለማስገባት የሚከተለውን የቴሌብር ቁጥር ይጠቀሙ:\n\n**0915503379 (Mulualem Shewel)**\n\nከእጅ ወደ እጅ ካስተላለፉ በኋላ የቴሌብር SMS እዚህ አፕ ውስጥ በመለጠፍ ማረጋገጥ ይችላሉ።", { parse_mode: "Markdown" });
-  } else if (data === 'register') {
-    bot.sendMessage(chatId, "👤 ለመመዝገብ ከታች ያለውን ሊንክ በመጫን ዌብ አፑን ይክፈቱ። በዛ ሰዓት በራስ-ሰር ይመዝገባሉ!", {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "🚀 ጨዋታውን ጀምር (Register & Play)", web_app: { url: "https://tiny-dasik-98c906.netlify.app" } }]
-        ]
-      }
-    });
-  } else if (data === 'instruction') {
-    bot.sendMessage(chatId, "💬 **የጨዋታው መመሪያ፦**\n1. ከ 1 እስከ 80 ያሉት ቁጥሮች ውስጥ የሚፈልጉትን (እስከ 10) ይምረጡ።\n2. የመደብ መጠንዎን ያስተካክሉ።\n3. 'መድብ (BUY)' የሚለውን በመጫን ቲኬትዎን ይቁረጡ።\n4. ቆጣሪው ሲያልቅ ቁጥሮች ይወጣሉ፣ የነኩት ቁጥር ከወጣ ያሸንፋሉ!");
-  }
 
-  // የአዝራሩን መጫን ማረጋገጫ (Loading እንዲቆም)
-  bot.answerCallbackQuery(query.id);
+    // ለገባው ተጫዋች የራሱን መረጃ እና አሁን በጨዋታው ያሉትን የተያዙ ቁጥሮች ላክለት
+    socket.emit('userData', {
+      user: registeredUsers[tgId],
+      allSelections: playerSelections
+    });
+
+    // አጠቃላይ የመጡ ተጫዋቾችን ብዛት ለሁሉም አስተላልፍ (Broadcast)
+    io.emit('updateLiveStats', {
+      totalPlayersCount: Object.keys(registeredUsers).length
+    });
+  });
+
+  // 📌 2. ተጫዋቹ የቢንጎ ቁጥር/ካርድ ሲይዝ (ቁጥር ሲመርጥ)
+  socket.on('selectBingoNumber', (data) => {
+    // data = { userId: "12345678", selectedNumbers: [12, 45, 60] }
+    const tgId = String(data.userId);
+
+    if (!registeredUsers[tgId]) {
+      return socket.emit('errorMsg', 'እባክዎ መጀመሪያ ይመዝገቡ!');
+    }
+
+    // የተጫዋቹን መረጃ እና የመረጣቸውን ቁጥሮች መዝግቦ መያዝ
+    playerSelections[tgId] = {
+      userId: tgId,
+      userName: registeredUsers[tgId].name,
+      numbers: data.selectedNumbers,
+      bet: data.bet || 10
+    };
+
+    // 🚀 ለሁሉም ተጫዋቾች (ALL USERS) የትኛው ተጫዋች የትኞቹን ቁጥሮች እንደያዘ በቅጽበት ማሳወቅ
+    io.emit('allPlayerSelectionsUpdated', {
+      updatedUserId: tgId,
+      allSelections: playerSelections
+    });
+  });
+
+  // 📌 3. ተጫዋች ሲወጣ (Disconnect)
+  socket.on('disconnect', () => {
+    console.log('ተጫዋች ወጥቷል:', socket.id);
+  });
+});
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+  console.log(`Bingo Live Server በፖርት ${PORT} ላይ እየሰራ ነው...`);
 });
