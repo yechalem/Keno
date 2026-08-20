@@ -10,8 +10,8 @@ const io = new Server(server, { cors: { origin: "*" } });
 const BOT_TOKEN = process.env.BOT_TOKEN || '8707515963:AAEyGvW6EBngaucnqJkxx1iTERTvZ9U2T8E';
 const ADMIN_ID = process.env.ADMIN_ID || '686733543';
 const TELEBIRR_NO = "0915503379";
-// 📌 አዲሱ የ Vercel ዌብ አፕ ሊንክ ተካቷል
-const WEB_APP_URL = "https://keno-live-mufroy3re-azazhts-projects.vercel.app/";
+// 📌 አዲሱ የ Netlify Drop ዌብ አፕ ሊንክ ተካቷል
+const WEB_APP_URL = "https://stunning-croquembouche-c49862.netlify.app";
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
