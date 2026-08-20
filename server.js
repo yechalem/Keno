@@ -1,212 +1,157 @@
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
-const TelegramBot = require('node-telegram-bot-api');
-const path = require('path');
+const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
+const axios = require("axios");
+const cors = require("cors");
 
 const app = express();
+app.use(cors());
+app.use(express.json());
+
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
-
-// 📌 Config / Environment Variables
-const BOT_TOKEN = process.env.BOT_TOKEN || '8707515963:AAEyGvW6EBngaucnqJkxx1iTERTvZ9U2T8E';
-const ADMIN_ID = process.env.ADMIN_ID || '686733543';
-const TELEBIRR_NO = process.env.TELEBIRR_NO || "0915503379";
-const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "A_ToolsX";
-
-// 📌 Web App URLs (ለሁለቱም ጨዋታዎች)
-const KENO_WEB_APP_URL = process.env.KENO_URL || "https://tiny-dasik-98c906.netlify.app";
-const BINGO_WEB_APP_URL = process.env.BINGO_URL || "https://effervescent-maamoul-0a2b69.netlify.app";
-
-const bot = new TelegramBot(BOT_TOKEN, { polling: true });
-
-bot.on("polling_error", (err) => {
-  if (!err.message.includes('409 Conflict')) {
-    console.log("Bot Warning:", err.message);
-  }
+const io = new Server(server, {
+    cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
-// 📌 Database & Shared State (ሁለቱም ጨዋታዎች አንድ ላይ የሚጠቀሙበት)
-const usersDB = {};        
-let activeTickets = [];    
-let drawnNumbers = [];     
-let isDrawing = false;
-let gameTimer = 60; 
-let currentFakePlayerCount = 3200;
+// የቴሌግራም ቦት መረጃዎች (የራስዎን ያስገቡ)
+const TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN_HERE";
+const ADMIN_CHAT_ID = "YOUR_ADMIN_CHAT_ID_HERE";
 
-const PAYTABLE = {
-  1: { 1: 3.5 },
-  2: { 2: 10, 1: 1 },
-  3: { 3: 50, 2: 2 },
-  4: { 4: 100, 3: 5, 2: 1 },
-  5: { 5: 300, 4: 15, 3: 2 },
-  6: { 6: 1000, 5: 50, 4: 5, 3: 1 },
-  7: { 7: 2000, 6: 100, 5: 12, 4: 2 },
-  8: { 8: 5000, 7: 300, 6: 40, 5: 8, 4: 1 },
-  9: { 9: 10000, 8: 1000, 7: 150, 6: 20, 5: 3 },
-  10: { 10: 25000, 9: 2000, 8: 400, 7: 50, 6: 10, 5: 2 }
+// ዳታቤዝ (ለጊዜው በ Memory ላይ የተያዘ Shared Balance)
+// Keno እና Bingo ይሄንን አንድ ዳታ ይጠቀማሉ
+const usersDb = {}; 
+
+// የቢንጎ ጨዋታ ሩም ሁኔታ
+let bingoRoom = {
+    takenCards: [], // የተያዙ ካርዶች ዝርዝር
+    playersCount: 0,
+    activePlayers: {} // ተጫዋቾች እና የመረጡት ካርድ
 };
 
-bot.setMyCommands([
-  { command: 'play', description: '🎮 Play Games' },
-  { command: 'start', description: '🔄 Restart Bot' },
-  { command: 'balance', description: '💰 Check Balance' }
-]);
-
-// 🔹 /start ሲባል የ Keno እና Bingo አማራጮችን አብሮ ያሳያል
-bot.onText(/\/start/, (msg) => {
-  const chatId = msg.chat.id;
-  const userId = String(msg.from.id);
-  const userName = msg.from.first_name || "ተጫዋች";
-
-  if (!usersDB[userId]) {
-    usersDB[userId] = { id: userId, name: userName, balance: 50.00, history: [] };
-  }
-
-  const welcomeText = `እንኳን ደህና መጡ ${userName}! 👋\n\nለመጫወት የሚፈልጉትን ጨዋታ ይምረጡ (ባላንስዎ ለሁለቱም ያገለግላል)፦`;
-
-  const options = {
-    reply_markup: {
-      inline_keyboard: [
-        [
-          { text: "🎮 Play Keno", web_app: { url: KENO_WEB_APP_URL } },
-          { text: "🎯 Play Bingo", web_app: { url: BINGO_WEB_APP_URL } }
-        ],
-        [
-          { text: "💰 Check Balance", callback_data: "balance" },
-          { text: "💸 Deposit", callback_data: "deposit" }
-        ],
-        [
-          { text: "🚨 Contact support", url: `https://t.me/${ADMIN_USERNAME}` },
-          { text: "💬 Instruction", callback_data: "instruction" }
-        ]
-      ]
+// ለቴሌግራም አድሚን ሜሴጅ መላኪያ
+async function sendToTelegramAdmin(message) {
+    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+    try {
+        await axios.post(url, {
+            chat_id: ADMIN_CHAT_ID,
+            text: message,
+            parse_mode: "HTML"
+        });
+    } catch (error) {
+        console.error("Telegram notification error:", error.message);
     }
-  };
+}
 
-  bot.sendMessage(chatId, welcomeText, options);
-});
+io.on("connection", (socket) => {
+    console.log("New user connected:", socket.id);
 
-// 🔹 Callback Queries (የቦቱ አዝራሮች ምላሽ)
-bot.on('callback_query', (query) => {
-  const chatId = query.message.chat.id;
-  const userId = String(query.from.id);
-  const data = query.data;
+    // 1. ተጠቃሚ ሲመዘገብ (የጋራ ባላንሱን ማሳየት)
+    socket.on("registerUser", (userData) => {
+        const userId = userData.id;
+        socket.userId = userId;
 
-  if (data === 'balance') {
-    const bal = usersDB[userId] ? usersDB[userId].balance : 0.00;
-    bot.sendMessage(chatId, `💰 የጋራ የሕሳብዎ መጠን፦ ${bal.toFixed(2)} ETB`);
-  } else if (data === 'deposit') {
-    bot.sendMessage(chatId, `📥 **ገንዘብ ለማስገባት (Deposit)፦**\n\n1. በቴሌብር ወደዚህ ቁጥር ይላኩ፦ \`${TELEBIRR_NO}\`\n2. የላኩበትን SMS በ Keno ወይም Bingo App Deposit ገጽ ላይ ያስገቡ። ጥያቄው ወዲያውኑ ለ Admin ይላካል።`, { parse_mode: 'Markdown' });
-  } else if (data === 'instruction') {
-    bot.sendMessage(chatId, "💬 **የጨዋታው መመሪያ፦**\n1. Keno ወይም Bingo መርጠው ይግቡ።\n2. አስቀድመው የቆረጡት ባላንስ በሁለቱም ጨዋታዎች ይሰራል።\n3. ያሸነፉት ገንዘብ በቀጥታ ወደ ዋናው ባላንስዎ ይገባል።");
-  }
+        // ተጠቃሚው ከሌለ አዲስ መፍጠር (ከ 0.00 ባላንስ ጋር)
+        if (!usersDb[userId]) {
+            usersDb[userId] = { 
+                id: userId, 
+                first_name: userData.first_name, 
+                balance: 0.00 
+            };
+        }
 
-  bot.answerCallbackQuery(query.id);
-});
-
-// 🔹 Admin በ Telegram በኩል የትኛውንም Deposit የሚያጸድቅበት Command
-bot.onText(/\/deposit_(\d+)_(\d+(\.\d+)?)/, (msg, match) => {
-  const senderId = String(msg.chat.id);
-  if (senderId !== String(ADMIN_ID)) return;
-
-  const targetUserId = String(match[1]);
-  const amount = parseFloat(match[2]);
-
-  if (!usersDB[targetUserId]) {
-    usersDB[targetUserId] = { id: targetUserId, name: "ተጫዋች", balance: 0, history: [] };
-  }
-
-  usersDB[targetUserId].balance += amount;
-  const newBalance = usersDB[targetUserId].balance;
-
-  // ለሁለቱም App (Keno & Bingo) በቋሚነት ባላንስ ማሻሻያ ይልካል
-  io.to(targetUserId).emit('balanceUpdated', newBalance);
-  
-  bot.sendMessage(ADMIN_ID, `✅ Deposit ጸድቋል!\n\n🆔 User ID: ${targetUserId}\n💵 የተደመረ: ${amount} ETB\n💰 አዲሱ ባላንስ: ${newBalance.toFixed(2)} ETB`);
-  bot.sendMessage(targetUserId, `🎉 የ ${amount} ETB Deposit ጥያቄዎ ጸድቋል!\n\n💰 የአሁኑ ባላንስዎ፦ ${newBalance.toFixed(2)} ETB`);
-});
-
-// 📌 Socket.io Events (ከ Keno እና Bingo Web App የሚመጡ ጥያቄዎች)
-io.on('connection', (socket) => {
-  
-  // ተጫዋች ከ Keno ወይም Bingo ሲገባ መመዝገቢያና የባላንስ ማጋሪያ
-  socket.on('registerUser', (tgUser) => {
-    if (!tgUser || !tgUser.id) return;
-    const userId = String(tgUser.id);
-
-    if (!usersDB[userId]) {
-      usersDB[userId] = { id: userId, name: tgUser.first_name || "ተጫዋች", balance: 100.00, history: [] };
-    }
-    
-    socket.userId = userId;
-    socket.join(userId); // ለአንድ ተጫዋች ለብቻው መልእክት ለመላክ
-
-    // ያለውን የጋራ ባላንስ ወደ App ይልካል
-    socket.emit('userData', {
-      user: usersDB[userId],
-      activeTickets: activeTickets,
-      timer: gameTimer,
-      isDrawing: isDrawing,
-      drawnNumbers: drawnNumbers,
-      totalPlayersCount: currentFakePlayerCount
+        // ለተጠቃሚው የራሱን ባላንስ መላክ
+        socket.emit("userData", { user: usersDb[userId] });
+        
+        // አሁን ያለውን የቢንጎ ሩም ሁኔታ ለገባው ሰው ብቻ መላክ
+        socket.emit("roomState", {
+            takenCards: bingoRoom.takenCards,
+            playersCount: bingoRoom.playersCount
+        });
     });
-  });
 
-  // ከ Bingo ወይም Keno የሚላክ የ Deposit SMS ማረጋገጫ ለ አድሚን ይልካል
-  socket.on('verifyAndDeposit', (data) => {
-    const userId = String(data.userId);
-    const amount = parseFloat(data.amount);
-    const smsText = data.smsText;
-    const gameType = data.gameType || 'App'; // Keno ወይም Bingo መሆኑን ለመለየት
-    const user = usersDB[userId];
+    // 2. ተጠቃሚ ካርድ ሲመርጥ (ሌሎች ጋር ቀይ እንዲሆን መላክ)
+    socket.on("selectCard", (data) => {
+        const { userId, cardId, bet } = data;
+        const user = usersDb[userId];
 
-    if (!user) {
-      return socket.emit('errorMsg', 'ተጠቃሚው አልተገኘም!');
-    }
+        if (!user) return socket.emit("infoMsg", "ተጠቃሚው አልተገኘም!");
 
-    // ጥያቄውን ቀጥታ ለ Admin ቴሌግራም ይልካል
-    const adminMsg = `⚠️ **አዲስ የ Deposit ጥያቄ (${gameType})!**\n\n👤 ተጫዋች፦ ${user.name}\n🆔 ID፦ \`${userId}\`\n💰 መጠን፦ ${amount} ETB\n\n📝 **SMS Text፦**\n${smsText}\n\nለማጽደቅ ይህንን ይጫኑ፦\n/deposit_${userId}_${amount}`;
-    
-    bot.sendMessage(ADMIN_ID, adminMsg, { parse_mode: 'Markdown' });
-    socket.emit('infoMsg', 'የላኩት SMS ለ Admin ተልኳል፤ ተረጋግጦ ይጨመራል።');
-  });
+        // ካርዱ በሌላ ሰው ከተያዘ መከልከል
+        if (bingoRoom.takenCards.includes(String(cardId))) {
+            return socket.emit("infoMsg", "ይህ ካርድ ቀድሞ ተይዟል!");
+        }
 
-  // ከ Bingo ወይም Keno የሚላክ የ Withdraw ጥያቄ ለ አድሚን ይልካል
-  socket.on('requestWithdraw', (data) => {
-    const userId = String(data.userId);
-    const user = usersDB[userId];
+        // ባላንስ ማረጋገጥ እና መቀነስ
+        if (user.balance < bet) {
+            return socket.emit("infoMsg", "በቂ ባላንስ የለዎትም!");
+        }
+        
+        user.balance -= bet; 
+        bingoRoom.takenCards.push(String(cardId));
+        bingoRoom.activePlayers[userId] = cardId;
+        bingoRoom.playersCount = Object.keys(bingoRoom.activePlayers).length;
 
-    if (user && user.balance >= data.amount) {
-      user.balance -= data.amount;
-      
-      // በ Real-time ባላንሱን ይቀንሳል
-      io.to(userId).emit('balanceUpdated', user.balance);
-      
-      const msgText = `📤 **አዲስ የ Withdraw ጥያቄ!**\n\n👤 ተጫዋች፦ ${user.name}\n🆔 ID፦ \`${user.id}\`\n💰 መጠን፦ ${data.amount} ETB\n🏦 አካውንት details፦ ${data.accountDetails}`;
-      bot.sendMessage(ADMIN_ID, msgText, { parse_mode: 'Markdown' });
-      socket.emit('infoMsg', 'የወጪ ጥያቄዎ ለ Admin ተልኳል።');
-    } else {
-      socket.emit('errorMsg', 'በቂ ባላንስ የለዎትም!');
-    }
-  });
+        // ለባለቤቱ አዲሱን ባላንስ መላክ
+        socket.emit("balanceUpdated", user.balance);
 
-  // Keno / Bingo ትኬት መግዣ logic
-  socket.on('buyTicket', (data) => {
-    const userId = String(data.userId);
-    const user = usersDB[userId];
-    if (!user) return;
+        // ለሁሉም ተጫዋቾች ካርዱ መያዙን በ Real-time ማሳወቅ (በሁሉም ስልክ ቀይ ይሆናል)
+        io.emit("cardTaken", { cardId: cardId });
+        io.emit("updatePlayers", bingoRoom.playersCount);
+    });
 
-    if (user.balance < data.bet) return socket.emit('errorMsg', 'በቂ ባላንስ የለዎትም!');
+    // 3. የገቢ (Deposit) ጥያቄ
+    socket.on("verifyAndDeposit", (data) => {
+        const { userId, amount, smsText } = data;
+        const user = usersDb[userId];
+        
+        const adminMsg = `📥 <b>አዲስ የገቢ ጥያቄ</b>\n\n👤 ስም: ${user?.first_name || 'Unkown'}\n🆔 መታወቂያ: <code>${userId}</code>\n💰 መጠን: <b>${amount} ETB</b>\n📝 SMS:\n${smsText}`;
+        sendToTelegramAdmin(adminMsg);
+        
+        socket.emit("infoMsg", "የገቢ ጥያቄዎ ለአድሚን ተልኳል። ሲረጋገጥ ባላንስዎ ይስተካከላል!");
+    });
 
-    user.balance -= data.bet;
+    // 4. የወጪ (Withdraw) ጥያቄ
+    socket.on("requestWithdraw", (data) => {
+        const { userId, amount, accountDetails } = data;
+        const user = usersDb[userId];
 
-    // አዲሱን ባላንስ ለተጫዋቹ ይልካል
-    io.to(userId).emit('balanceUpdated', user.balance);
-    socket.emit('ticketBoughtSuccess');
-  });
+        if (!user || user.balance < amount) {
+            return socket.emit("infoMsg", "በቂ ባላንስ የለዎትም!");
+        }
+
+        // ገንዘቡን ከባላንስ ላይ መቀነስ (Pending ሁኔታ)
+        user.balance -= amount;
+        socket.emit("balanceUpdated", user.balance);
+
+        const adminMsg = `📤 <b>አዲስ የወጪ ጥያቄ</b>\n\n👤 ስም: ${user.first_name}\n🆔 መታወቂያ: <code>${userId}</code>\n💰 መጠን: <b>${amount} ETB</b>\n💳 አካውንት: ${accountDetails}`;
+        sendToTelegramAdmin(adminMsg);
+
+        socket.emit("infoMsg", "የወጪ ጥያቄዎ ተቀባይነት አግኝቷል። በቅርቡ ወደ አካውንትዎ ይገባል!");
+    });
+
+    // ተጠቃሚው ሲወጣ
+    socket.on("disconnect", () => {
+        console.log("User disconnected:", socket.id);
+    });
 });
 
-app.use(express.static(__dirname));
-const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+// Admin ገንዘብ ሲያጸድቅ (Webhook ወይም Admin Panel ተጠቅመው የሚጠሩት Endpoint)
+app.post("/admin/approve-deposit", (req, res) => {
+    const { userId, amount } = req.body;
+    
+    if (usersDb[userId]) {
+        usersDb[userId].balance += parseFloat(amount);
+        
+        // ለተጠቃሚው አዲሱን ባላንስ በ Real-time መላክ (ለ Bingo ሆነ Keno)
+        io.emit("balanceUpdated", usersDb[userId].balance);
+        res.json({ success: true, newBalance: usersDb[userId].balance });
+    } else {
+        res.status(404).json({ error: "User not found" });
+    }
+});
+
+// ሰርቨሩን ማስጀመር
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+});
