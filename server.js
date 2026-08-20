@@ -86,7 +86,7 @@ const PAYTABLE = {
 // 3. TELEGRAM BOT COMMANDS
 // ==========================================
 
-// 🔹 /start Command (Play Keno እና Play Bingo ጎን ለጎን)
+// 🔹 /start Command (ቀጥታ Play Keno እና Play Bingo ያወጣል)
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
   const firstName = msg.from.first_name || "ተጫዋች";
