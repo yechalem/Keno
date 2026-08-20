@@ -1,112 +1,70 @@
-// --- የቢንጎ ጨዋታ ተለዋዋጮች (Bingo Live States) ---
-let activeBingoCards = []; // የሁሉም ተጫዋቾች የቢንጎ ካርዶች
-let bingoDrawnNumbers = []; // የቢንጎ የወጡ ቁጥሮች
-let bingoTimer = 30; // የቢንጎ ቁጥር የሚወጣበት ሰዓት ቆጣሪ
+const TelegramBot = require('node-telegram-bot-api');
+const axios = require('axios'); // ከሰርቨራችን ጋር ለመነጋገር (npm install axios ያስፈልጋል)
 
-// የቢንጎ ሰዓት ቆጣሪ እና የቁጥር ማውጫ ኡደት (Bingo Game Loop)
-setInterval(() => {
-    bingoTimer--;
-    if (bingoTimer <= 0) {
-        bingoTimer = 30;
-        bingoDrawnNumbers = []; 
-        activeBingoCards = []; 
-        io.emit('bingoGameReset');
-    } else {
-        if (bingoDrawnNumbers.length < 75) {
-            let randBingoNum;
-            do {
-                randBingoNum = Math.floor(Math.random() * 75) + 1;
-            } while (bingoDrawnNumbers.includes(randBingoNum));
+// የቦት ቶከንዎን እዚህ ያስገቡ
+const TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN';
+const bot = new TelegramBot(TOKEN, { polling: true });
 
-            bingoDrawnNumbers.push(randBingoNum);
-            io.emit('newBingoCall', {
-                currentCall: randBingoNum,
-                drawnList: bingoDrawnNumbers
-            });
-        }
+// የሰርቨርዎ ሊንክ (Render ላይ ያስቀመጡት የ Backend ሊንክ)
+const SERVER_URL = 'https://bk-gbd9.onrender.com';
+
+// /start ትዕዛዝ ሲላክ (የጠየቁትን ቅርጽ ሙሉ በሙሉ የጠበቀ)
+bot.onText(/\/start/, (msg) => {
+  const chatId = msg.chat.id;
+  const welcomeText = "Welcome to your bot! Choose an option below.";
+
+  const options = {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: "🎮 Play", web_app: { url: "https://tiny-dasik-98c906.netlify.app" } },
+          { text: "👤 Register", callback_data: "register" }
+        ],
+        [
+          { text: "💰 Check Balance", callback_data: "balance" },
+          { text: "💸 Deposit", callback_data: "deposit" }
+        ],
+        [
+          { text: "🚨 Contact support", url: "https://t.me/YOUR_ADMIN_USERNAME" },
+          { text: "💬 Instruction", callback_data: "instruction" }
+        ]
+      ]
     }
-    io.emit('bingoTimerUpdate', bingoTimer);
-}, 1000);
+  };
 
-// --- በ Socket.io ግንኙነት ውስጥ የሚጨመሩ የቢንጎ ኢቨንቶች ---
-io.on('connection', (socket) => {
-    // (የኬኖ ኮዶችዎ እዚህ ጋር እንዳሉ ይቀጥላሉ...)
+  bot.sendMessage(chatId, welcomeText, options);
+});
 
-    // ዩዘር ሲገባ የቢንጎ መረጃዎችን እንዲረከብ
-    socket.on('registerUser', async (userData) => {
-        try {
-            let user = await User.findOne({ telegramId: userData.id });
-            if (!user) {
-                user = await User.create({
-                    telegramId: userData.id,
-                    name: userData.first_name,
-                    balance: 500.00,
-                    history: []
-                });
-            }
-            // ለተጫዋቹ የቢንጎ አሁን ያሉ መረጃዎችንም ማስተላለፍ
-            socket.emit('userData', {
-                user: { name: user.name, balance: user.balance },
-                bingoCards: activeBingoCards,
-                bingoDrawnList: bingoDrawnNumbers
-            });
-        } catch (err) {
-            console.error('Register error:', err);
-        }
+// የአዝራሮቹ ምላሽ (Callback Queries)
+bot.on('callback_query', async (query) => {
+  const chatId = query.message.chat.id;
+  const userId = query.from.id;
+  const data = query.data;
+
+  if (data === 'balance') {
+    try {
+      // ከሰርቨር ላይ የተጠቃሚውን ትክክለኛ ባላንስ ማምጣት
+      const response = await axios.get(`${SERVER_URL}/api/user/${userId}`);
+      const balance = response.data ? response.data.balance : 0.00;
+      bot.sendMessage(chatId, `💰 የሒሳብዎ መጠን: ${balance.toFixed(2)} ETB`);
+    } catch (error) {
+      // ሰርቨር ላይ ካልተመዘገበ በነባሪ 0.00 ያሳያል
+      bot.sendMessage(chatId, "💰 የሒሳብዎ መጠን: 0.00 ETB");
+    }
+  } else if (data === 'deposit') {
+    bot.sendMessage(chatId, "📥 ገንዘብ ለማስገባት የሚከተለውን የቴሌብር ቁጥር ይጠቀሙ:\n\n**0915503379 (Mulualem Shewel)**\n\nከእጅ ወደ እጅ ካስተላለፉ በኋላ የቴሌብር SMS እዚህ አፕ ውስጥ በመለጠፍ ማረጋገጥ ይችላሉ።", { parse_mode: "Markdown" });
+  } else if (data === 'register') {
+    bot.sendMessage(chatId, "👤 ለመመዝገብ ከታች ያለውን ሊንክ በመጫን ዌብ አፑን ይክፈቱ። በዛ ሰዓት በራስ-ሰር ይመዝገባሉ!", {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "🚀 ጨዋታውን ጀምር (Register & Play)", web_app: { url: "https://tiny-dasik-98c906.netlify.app" } }]
+        ]
+      }
     });
+  } else if (data === 'instruction') {
+    bot.sendMessage(chatId, "💬 **የጨዋታው መመሪያ፦**\n1. ከ 1 እስከ 80 ያሉት ቁጥሮች ውስጥ የሚፈልጉትን (እስከ 10) ይምረጡ።\n2. የመደብ መጠንዎን ያስተካክሉ።\n3. 'መድብ (BUY)' የሚለውን በመጫን ቲኬትዎን ይቁረጡ።\n4. ቆጣሪው ሲያልቅ ቁጥሮች ይወጣሉ፣ የነኩት ቁጥር ከወጣ ያሸንፋሉ!");
+  }
 
-    // 1. የቢንጎ ካርድ ግዢ፣ የጋራ ባላንስ (Shared Wallet) እና የቁጥር መደራረብ ማረጋገጫ (Validation)
-    socket.on('bingo_buy_card', async (data) => {
-        try {
-            let user = await User.findOne({ telegramId: data.userId });
-            if (!user || user.balance < data.bet) {
-                return socket.emit('errorMsg', 'በቂ ባላንስ የለዎትም!');
-            }
-
-            // ተጫዋቹ የመረጠው ቁጥር ከዚህ በፊት በሌላ ተጫዋች የተያዘ መሆኑን ማረጋገጥ
-            let allTakenNumbers = activeBingoCards.flatMap(c => c.numbers);
-            let isAlreadyTaken = data.numbers.some(num => allTakenNumbers.includes(num));
-
-            if (isAlreadyTaken) {
-                return socket.emit('errorMsg', 'አንዳንድ መርጠዋቸው የነበሩ ቁጥሮች በሌላ ተጫዋች ተይዘዋል! እባክዎ እንደገና ይምረጡ።');
-            }
-
-            // የጋራ ባላንስ መቀነስ (Shared Wallet ከ MongoDB ጋር የተገናኘ)
-            user.balance -= data.bet;
-            user.history.unshift({ type: 'BINGO_BET', amount: -data.bet, date: new Date() });
-            await user.save();
-
-            let newCard = {
-                userId: data.userId,
-                userName: user.name,
-                numbers: data.numbers,
-                bet: data.bet
-            };
-
-            activeBingoCards.push(newCard);
-
-            socket.emit('balanceUpdated', user.balance);
-            socket.emit('bingoCardSuccess');
-            io.emit('updateAllBingoCards', activeBingoCards); // የሁሉንም ተጫዋቾች ቦርድ ለሁሉም ማሳየት
-        } catch (err) {
-            console.error('Bingo buy error:', err);
-        }
-    });
-
-    // 2. ቢንጎ አሸናፊ ሲሆን የጋራ ባላንሱን መጨመር
-    socket.on('bingo_winner', async (data) => {
-        try {
-            let user = await User.findOne({ telegramId: data.userId });
-            if (user) {
-                user.balance += data.winAmount;
-                user.history.unshift({ type: 'BINGO_WIN', amount: data.winAmount, date: new Date() });
-                await user.save();
-
-                socket.emit('balanceUpdated', user.balance);
-                io.emit('infoMsg', `🎉 ተጫዋች ${user.name} የቢንጎ ጨዋታውን አሸንፏል! (+${data.winAmount} ETB)`);
-            }
-        } catch (err) {
-            console.error('Bingo win error:', err);
-        }
-    });
+  // የአዝራሩን መጫን ማረጋገጫ (Loading እንዲቆም)
+  bot.answerCallbackQuery(query.id);
 });
