@@ -1,7 +1,7 @@
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
-const axios = require("axios");
+const TelegramBot = require("node-telegram-bot-api");
 const cors = require("cors");
 
 const app = express();
@@ -13,138 +13,211 @@ const io = new Server(server, {
     cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
-// የቴሌግራም ቦት መረጃዎች (የራስዎን ያስገቡ)
-const TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN_HERE";
-const ADMIN_CHAT_ID = "YOUR_ADMIN_CHAT_ID_HERE";
+// የቴሌግራም ቦት መረጃዎች (የራስዎን TOKEN እና ADMIN CHAT ID ያስገቡ)
+const BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN_HERE";
+const ADMIN_CHAT_ID = "YOUR_ADMIN_CHAT_ID_HERE"; 
+const WEB_APP_URL = "https://tiny-dasik-98c906.netlify.app";
 
-// ዳታቤዝ (ለጊዜው በ Memory ላይ የተያዘ Shared Balance)
-// Keno እና Bingo ይሄንን አንድ ዳታ ይጠቀማሉ
+const bot = new TelegramBot(BOT_TOKEN, { polling: true });
+
+// Shared Database (በ Keno፣ Bingo እና Telegram Bot በጋራ የሚያገለግል)
 const usersDb = {}; 
 
 // የቢንጎ ጨዋታ ሩም ሁኔታ
 let bingoRoom = {
-    takenCards: [], // የተያዙ ካርዶች ዝርዝር
+    takenCards: [],
     playersCount: 0,
-    activePlayers: {} // ተጫዋቾች እና የመረጡት ካርድ
+    activePlayers: {}
 };
 
-// ለቴሌግራም አድሚን ሜሴጅ መላኪያ
-async function sendToTelegramAdmin(message) {
-    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
-    try {
-        await axios.post(url, {
-            chat_id: ADMIN_CHAT_ID,
-            text: message,
-            parse_mode: "HTML"
-        });
-    } catch (error) {
-        console.error("Telegram notification error:", error.message);
+// ==========================================
+// 1. TELEGRAM BOT LOGIC
+// ==========================================
+
+// /start ትዕዛዝ ሲላክ
+bot.onText(/\/start/, (msg) => {
+    const chatId = msg.chat.id;
+    const userId = String(msg.from.id);
+    const firstName = msg.from.first_name || "Player";
+
+    // ተጠቃሚውን በ Shared Database ውስጥ መመዝገብ
+    if (!usersDb[userId]) {
+        usersDb[userId] = { id: userId, first_name: firstName, balance: 0.00 };
     }
-}
+
+    const welcomeText = `እንኳን ወደ ጨዋታችን በደህና መጡ ${firstName}! የሚፈልጉትን አማራጭ ይምረጡ።`;
+
+    const options = {
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    { text: "🎮 Play Game", web_app: { url: WEB_APP_URL } },
+                    { text: "👤 Profile", callback_data: "profile" }
+                ],
+                [
+                    { text: "💰 Check Balance", callback_data: "balance" },
+                    { text: "💸 Deposit", callback_data: "deposit" }
+                ],
+                [
+                    { text: "📤 Withdraw", callback_data: "withdraw" },
+                    { text: "💬 Instruction", callback_data: "instruction" }
+                ],
+                [
+                    { text: "🚨 Contact Support", url: "https://t.me/YOUR_ADMIN_USERNAME" }
+                ]
+            ]
+        }
+    };
+
+    bot.sendMessage(chatId, welcomeText, options);
+});
+
+// የአዝራሮቹ ምላሽ (Callback Queries)
+bot.on("callback_query", (query) => {
+    const chatId = query.message.chat.id;
+    const userId = String(query.from.id);
+    const data = query.data;
+
+    // ተጠቃሚው በዳታቤዝ ውስጥ መኖሩን ማረጋገጥ
+    if (!usersDb[userId]) {
+        usersDb[userId] = { id: userId, first_name: query.from.first_name || "Player", balance: 0.00 };
+    }
+
+    const userBalance = usersDb[userId].balance.toFixed(2);
+
+    if (data === "balance") {
+        bot.sendMessage(chatId, `💰 **የሕሳብዎ መጠን (Balance):** ${userBalance} ETB`);
+    } else if (data === "deposit") {
+        bot.sendMessage(chatId, `📥 **ገንዘብ ማስገቢያ (Deposit):**\n\nበቴሌብር ወደ **0915503379 (Mulualem)** ብር ያስገቡ።\nከዚያም በ Web App ውስጥ ገብተው የላኩበትን መጠን እና SMS ያስገቡ።`);
+    } else if (data === "withdraw") {
+        bot.sendMessage(chatId, `📤 **ገንዘብ ማውጫ (Withdraw):**\n\nበ Web App ውስጥ በመግባት የወጪ ማድረጊያ ጥያቄ ማቅረብ ይችላሉ።\nአሁን ያለዎት ባላንስ: **${userBalance} ETB**`);
+    } else if (data === "profile") {
+        bot.sendMessage(chatId, `👤 **የመገለጫ መረጃ:**\n\nስም: ${query.from.first_name}\nID: \`${userId}\` \nባላንስ: ${userBalance} ETB`, { parse_mode: "Markdown" });
+    } else if (data === "instruction") {
+        bot.sendMessage(chatId, "💬 **የጨዋታው መመሪያ፦**\n1. Web App ውስጥ ገብተው Bingo ወይም Keno ይምረጡ\n2. የካርድ ቁጥር ይምረጡ (የመረጡት ካርድ ለሌሎች ቀይ ሆኖ ይዘጋል)\n3. ጨዋታው ሲጀምር Bingo/Keno በማድረግ ያሸንፉ!");
+    }
+
+    bot.answerCallbackQuery(query.id);
+});
+
+// ==========================================
+// 2. SOCKET.IO REAL-TIME LOGIC (WEB APP)
+// ==========================================
 
 io.on("connection", (socket) => {
-    console.log("New user connected:", socket.id);
+    console.log("Web App client connected:", socket.id);
 
-    // 1. ተጠቃሚ ሲመዘገብ (የጋራ ባላንሱን ማሳየት)
+    // ተጠቃሚ ከ WebApp ሲገናኝ
     socket.on("registerUser", (userData) => {
-        const userId = userData.id;
+        const userId = String(userData.id);
         socket.userId = userId;
 
-        // ተጠቃሚው ከሌለ አዲስ መፍጠር (ከ 0.00 ባላንስ ጋር)
         if (!usersDb[userId]) {
             usersDb[userId] = { 
                 id: userId, 
-                first_name: userData.first_name, 
+                first_name: userData.first_name || "Player", 
                 balance: 0.00 
             };
         }
 
-        // ለተጠቃሚው የራሱን ባላንስ መላክ
+        // አሁናዊ ባላንስ መላክ
         socket.emit("userData", { user: usersDb[userId] });
-        
-        // አሁን ያለውን የቢንጎ ሩም ሁኔታ ለገባው ሰው ብቻ መላክ
+
+        // የቢንጎ ሩም ወቅታዊ ሁኔታ መላክ
         socket.emit("roomState", {
             takenCards: bingoRoom.takenCards,
             playersCount: bingoRoom.playersCount
         });
     });
 
-    // 2. ተጠቃሚ ካርድ ሲመርጥ (ሌሎች ጋር ቀይ እንዲሆን መላክ)
+    // ተጠቃሚ ካርድ ሲመርጥ (ለሌሎች በ Real-time ቀይ ሆኖ እንዲታይ የሚያደርግ)
     socket.on("selectCard", (data) => {
         const { userId, cardId, bet } = data;
-        const user = usersDb[userId];
+        const uId = String(userId);
+        const user = usersDb[uId];
 
         if (!user) return socket.emit("infoMsg", "ተጠቃሚው አልተገኘም!");
 
-        // ካርዱ በሌላ ሰው ከተያዘ መከልከል
+        // ካርዱ ቀድሞ ከተያዘ መከልከል
         if (bingoRoom.takenCards.includes(String(cardId))) {
-            return socket.emit("infoMsg", "ይህ ካርድ ቀድሞ ተይዟል!");
+            return socket.emit("infoMsg", "ይህ ካርድ በሌላ ተጫዋች ተይዟል!");
         }
 
-        // ባላንስ ማረጋገጥ እና መቀነስ
+        // ባላንስ ማረጋገጥ
         if (user.balance < bet) {
             return socket.emit("infoMsg", "በቂ ባላንስ የለዎትም!");
         }
-        
-        user.balance -= bet; 
+
+        // ባላንስ መቀነስ እና ካርዱን መያዝ
+        user.balance -= bet;
         bingoRoom.takenCards.push(String(cardId));
-        bingoRoom.activePlayers[userId] = cardId;
+        bingoRoom.activePlayers[uId] = cardId;
         bingoRoom.playersCount = Object.keys(bingoRoom.activePlayers).length;
 
-        // ለባለቤቱ አዲሱን ባላንስ መላክ
+        // ለተጠቃሚው አዲሱን ባላንስ ማሳወቅ
         socket.emit("balanceUpdated", user.balance);
 
-        // ለሁሉም ተጫዋቾች ካርዱ መያዙን በ Real-time ማሳወቅ (በሁሉም ስልክ ቀይ ይሆናል)
+        // ለሁሉም ተጫዋቾች ካርዱ መያዙን በ Real-time ማሰራጨት (የሌሎች ስክሪን ላይ ቀይ ይሆናል)
         io.emit("cardTaken", { cardId: cardId });
         io.emit("updatePlayers", bingoRoom.playersCount);
     });
 
-    // 3. የገቢ (Deposit) ጥያቄ
+    // Web App ላይ Deposit ሲደረግ ለ Admin በ Telegram መልእክት ይልካል
     socket.on("verifyAndDeposit", (data) => {
         const { userId, amount, smsText } = data;
-        const user = usersDb[userId];
-        
-        const adminMsg = `📥 <b>አዲስ የገቢ ጥያቄ</b>\n\n👤 ስም: ${user?.first_name || 'Unkown'}\n🆔 መታወቂያ: <code>${userId}</code>\n💰 መጠን: <b>${amount} ETB</b>\n📝 SMS:\n${smsText}`;
-        sendToTelegramAdmin(adminMsg);
-        
+        const uId = String(userId);
+        const user = usersDb[uId];
+
+        const adminMsg = `📥 <b>አዲስ የገቢ (Deposit) ጥያቄ</b>\n\n👤 <b>ስም:</b> ${user?.first_name || 'Unkown'}\n🆔 <b>ID:</b> <code>${uId}</code>\n💰 <b>መጠን:</b> ${amount} ETB\n📱 <b>SMS መልእክት:</b>\n<code>${smsText}</code>`;
+
+        bot.sendMessage(ADMIN_CHAT_ID, adminMsg, { parse_mode: "HTML" });
         socket.emit("infoMsg", "የገቢ ጥያቄዎ ለአድሚን ተልኳል። ሲረጋገጥ ባላንስዎ ይስተካከላል!");
     });
 
-    // 4. የወጪ (Withdraw) ጥያቄ
+    // Web App ላይ Withdraw ሲደረግ ለ Admin በ Telegram መልእክት ይልካል
     socket.on("requestWithdraw", (data) => {
         const { userId, amount, accountDetails } = data;
-        const user = usersDb[userId];
+        const uId = String(userId);
+        const user = usersDb[uId];
 
-        if (!user || user.balance < amount) {
+        if (!user || user.balance < parseFloat(amount)) {
             return socket.emit("infoMsg", "በቂ ባላንስ የለዎትም!");
         }
 
-        // ገንዘቡን ከባላንስ ላይ መቀነስ (Pending ሁኔታ)
-        user.balance -= amount;
+        // ባላንስ መቀነስ (Pending)
+        user.balance -= parseFloat(amount);
         socket.emit("balanceUpdated", user.balance);
 
-        const adminMsg = `📤 <b>አዲስ የወጪ ጥያቄ</b>\n\n👤 ስም: ${user.first_name}\n🆔 መታወቂያ: <code>${userId}</code>\n💰 መጠን: <b>${amount} ETB</b>\n💳 አካውንት: ${accountDetails}`;
-        sendToTelegramAdmin(adminMsg);
+        const adminMsg = `📤 <b>አዲስ የወጪ (Withdraw) ጥያቄ</b>\n\n👤 <b>ስም:</b> ${user.first_name}\n🆔 <b>ID:</b> <code>${uId}</code>\n💰 <b>መጠን:</b> ${amount} ETB\n💳 <b>አካውንት:</b> ${accountDetails}`;
 
-        socket.emit("infoMsg", "የወጪ ጥያቄዎ ተቀባይነት አግኝቷል። በቅርቡ ወደ አካውንትዎ ይገባል!");
+        bot.sendMessage(ADMIN_CHAT_ID, adminMsg, { parse_mode: "HTML" });
+        socket.emit("infoMsg", "የወጪ ጥያቄዎ ተልኳል፤ በቅርቡ ገቢ ይደረጋል!");
     });
 
-    // ተጠቃሚው ሲወጣ
     socket.on("disconnect", () => {
-        console.log("User disconnected:", socket.id);
+        console.log("Client disconnected:", socket.id);
     });
 });
 
-// Admin ገንዘብ ሲያጸድቅ (Webhook ወይም Admin Panel ተጠቅመው የሚጠሩት Endpoint)
+// ==========================================
+// 3. ADMIN API (ለገንዘብ ማጽደቂያ)
+// ==========================================
+
+// አድሚን የገቢ ጥያቄ ሲያጸድቅ ባላንስ መጨመሪያ
 app.post("/admin/approve-deposit", (req, res) => {
     const { userId, amount } = req.body;
-    
-    if (usersDb[userId]) {
-        usersDb[userId].balance += parseFloat(amount);
-        
-        // ለተጠቃሚው አዲሱን ባላንስ በ Real-time መላክ (ለ Bingo ሆነ Keno)
-        io.emit("balanceUpdated", usersDb[userId].balance);
-        res.json({ success: true, newBalance: usersDb[userId].balance });
+    const uId = String(userId);
+
+    if (usersDb[uId]) {
+        usersDb[uId].balance += parseFloat(amount);
+
+        // ለተጠቃሚው ቦት ላይ ማሳወቂያ መላክ
+        bot.sendMessage(uId, `✅ <b>የገቢ ጥያቄዎ ጸድቋል!</b>\n\n💰 የተጨመረ: ${amount} ETB\n💳 አሁናዊ ባላንስ: ${usersDb[uId].balance.toFixed(2)} ETB`, { parse_mode: "HTML" });
+
+        // WebApp ላይ ካለ ባላንሱን በ Real-time ማዘመን
+        io.emit("balanceUpdated", usersDb[uId].balance);
+
+        res.json({ success: true, newBalance: usersDb[uId].balance });
     } else {
         res.status(404).json({ error: "User not found" });
     }
@@ -153,5 +226,5 @@ app.post("/admin/approve-deposit", (req, res) => {
 // ሰርቨሩን ማስጀመር
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+    console.log(`Server & Telegram Bot running on port ${PORT}`);
 });
