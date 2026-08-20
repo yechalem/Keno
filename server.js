@@ -9,74 +9,52 @@ const io = new Server(server, {
   }
 });
 
-// የውሂብ ማከማቻዎች
-const registeredUsers = {}; // { tgId: { id, name, balance, socketId } }
-const bingoActiveCards = {}; // { tgId: { userName, numbers: [], bet: 20, hits: 0 } }
-let bingoDrawnNumbers = []; // በቢንጎ የወጡ ቁጥሮች (ከ 1 እስከ 75)
-let bingoTimer = 60; // የቢንጎ ቆጣሪ
-let isBingoGameRunning = false;
+// 1. የውሂብ ማከማቻዎች (Databases)
+const registeredUsers = {};      // { tgId: { id, name, balance, socketId } }
+const bingoTakenNumbers = {};    // { number: tgId } -> ቢንጎ ላይ የተያዙ ቁጥሮች
+let bingoDrawnNumbers = [];      // ቢንጎ ላይ የወጡ ቁጥሮች (ከ 1 እስከ 75)
+let bingoTimer = 30;             // የቢንጎ 30 ሰከንድ ቆጣሪ
 
-// --- የቢንጎ ግሎባል ቆጣሪ እና ቁጥር ማውጫ (ለተመሳሳይ ሰዓት ለሁሉም Call ለማድረግ) ---
+const activeKenoTickets = [];    // የኬኖ ቲኬቶች
+let kenoDrawnNumbers = [];       // የኬኖ የወጡ ቁጥሮች
+let kenoTimer = 60;              // የኬኖ ቆጣሪ
+
+// --- የቢንጎ 30 ሰከንድ ቆጣሪ እና ራስ-ሰር ጥሪ (Auto-Caller) ---
 setInterval(() => {
-  if (!isBingoGameRunning) return;
-
   bingoTimer--;
-  io.emit('bingoTimerUpdate', bingoTimer);
-
   if (bingoTimer <= 0) {
-    startNewBingoRound();
+    bingoTimer = 30;
+    bingoTakenNumbers = {}; // አዲስ ዙር ሲጀመር የተያዙ ቁጥሮችን ማጽዳት (ከተፈለገ)
+    bingoDrawnNumbers = [];
+    io.emit('bingoGameReset');
   }
+
+  // በየ 30 ሰከንዱ አዲስ ቁጥር ማውጣት (ከ 1 እስከ 75)
+  let nextNum;
+  do {
+    nextNum = Math.floor(Math.random() * 75) + 1;
+  } while (bingoDrawnNumbers.includes(nextNum));
+
+  bingoDrawnNumbers.push(nextNum);
+  io.emit('bingoNewNumberCall', { number: nextNum, drawnList: bingoDrawnNumbers, timer: bingoTimer });
+}, 30000);
+
+// --- የኬኖ 60 ሰከንድ ቆጣሪ (የነበረው) ---
+setInterval(() => {
+  kenoTimer--;
+  if (kenoTimer <= 0) {
+    kenoTimer = 60;
+    kenoDrawnNumbers = [];
+    activeKenoTickets.length = 0;
+    io.emit('kenoGameReset');
+  }
+  io.emit('kenoTimerUpdate', kenoTimer);
 }, 1000);
-
-function startNewBingoRound() {
-  bingoTimer = 60;
-  bingoDrawnNumbers = [];
-  
-  // ቁጥሮችን በየሰኮንዱ ማውጣት (ከ 1 እስከ 75)
-  let count = 0;
-  const drawInterval = setInterval(() => {
-    if (count >= 30 || bingoTimer > 40) {
-      clearInterval(drawInterval);
-      return;
-    }
-
-    let randNum;
-    do {
-      randNum = Math.floor(Math.random() * 75) + 1;
-    } while (bingoDrawnNumbers.includes(randNum));
-
-    bingoDrawnNumbers.push(randNum);
-
-    // በቢንጎ ካርዶች ላይ የተመቱትን (Hits) ማረጋገጥ
-    for (let tgId in bingoActiveCards) {
-      let card = bingoActiveCards[tgId];
-      card.hits = card.numbers.filter(n => bingoDrawnNumbers.includes(n)).length;
-      
-      // አሸናፊ ካለ ማረጋገጥ (ለምሳሌ 5 ወይም ሁሉም ቁጥር ሲመታ)
-      if (card.hits >= 5) {
-        io.emit('bingoWinnerFound', { winnerName: card.userName, winningNumbers: card.numbers });
-      }
-    }
-
-    // ቁጥሩን ለሁሉም ተጠቃሚዎች በአንድ ጊዜ መጥራት (Call)
-    io.emit('bingoNewDrawnNumber', {
-      number: randNum,
-      drawnList: bingoDrawnNumbers,
-      allCards: bingoActiveCards
-    });
-
-    count++;
-  }, 2000);
-}
-
-//  ጨዋታውን ማስጀመር
-isBingoGameRunning = true;
-
 
 io.on('connection', (socket) => {
   console.log('ተጫዋች ተገናኝቷል:', socket.id);
 
-  // 1. ቴሌግራም ID በመጠቀም ተጠቃሚውን መመዝገብ
+  // 📌 1. ተጠቃሚ በቴሌግራም ID እና በባላንሱ ሲመዘገብ
   socket.on('registerUser', (userData) => {
     if (!userData || !userData.id) return;
     const tgId = String(userData.id);
@@ -85,59 +63,76 @@ io.on('connection', (socket) => {
       registeredUsers[tgId] = {
         id: tgId,
         name: userData.first_name || "ተጫዋች",
-        balance: 100.00, // የመጀመሪያ ቦነስ
+        balance: userData.balance || 100.00, // የገባበት የብር መጠን ወይም ነባሪ
         socketId: socket.id
       };
     } else {
       registeredUsers[tgId].socketId = socket.id;
+      if (userData.balance) {
+        registeredUsers[tgId].balance = userData.balance;
+      }
     }
 
     // መረጃውን ለተጠቃሚው መመለስ
     socket.emit('userData', {
       user: registeredUsers[tgId],
+      bingoTakenNumbers: bingoTakenNumbers,
       bingoDrawnNumbers: bingoDrawnNumbers,
-      bingoActiveCards: bingoActiveCards,
-      bingoTimer: bingoTimer
+      kenoDrawnNumbers: kenoDrawnNumbers,
+      activeKenoTickets: activeKenoTickets
     });
-
-    io.emit('updateLiveStats', { totalPlayersCount: Object.keys(registeredUsers).length });
   });
 
-  // 2. ቢንጎ ላይ ተጠቃሚው ካርድ/ቁጥር ሲይዝ -> ለሁሉም ተጠቃሚዎች እንዲታይ ማድረግ
-  socket.on('buyBingoCard', (data) => {
-    // data = { userId: "...", numbers: [...], bet: 20 }
-    const tgId = String(data.userId);
-    const user = registeredUsers[tgId];
+  // 📌 2. ቢንጎ ላይ ተጠቃሚ ቁጥር ሲይዝ (ለምሳሌ 66) -> ለሁሉም ማሳየት
+  socket.on('selectBingoNumber', (data) => {
+    const { tgId, number } = data;
+    const user = registeredUsers[String(tgId)];
 
-    if (!user) return socket.emit('errorMsg', 'እባክዎ መጀመሪያ ይመዝገቡ!');
-    if (user.balance < data.bet) return socket.emit('errorMsg', 'ባላንስዎ በቂ አይደለም!');
+    if (!user) {
+      return socket.emit('errorMsg', 'እባክዎ መጀመሪያ ይመዝገቡ!');
+    }
 
-    // ከባላንስ መቀነስ
+    // ቁጥሩ ቀድሞ የተያዘ መሆኑን ማረጋገጥ
+    if (bingoTakenNumbers[number]) {
+      return socket.emit('errorMsg', 'ይህ ቁጥር ቀድሞ ተይዟል!');
+    }
+
+    // ቁጥሩን በ ተጠቃሚው ID መመዝገብ
+    bingoTakenNumbers[number] = String(tgId);
+
+    // 🚀 ለሁሉም ተጫዋቾች ያ ቁጥር በማን እንደተያዘ በቅጽበት ማሳወቅ
+    io.emit('bingoNumberTaken', {
+      number: number,
+      tgId: String(tgId),
+      userName: user.name,
+      takenNumbersMap: bingoTakenNumbers
+    });
+  });
+
+  // 📌 3. ኬኖ ቲኬት መግዛት (ቀድሞ የነበረው)
+  socket.on('buyTicket', (data) => {
+    const user = registeredUsers[String(data.userId)];
+    if (!user) return socket.emit('errorMsg', 'ተጠቃሚው አልተገኘም!');
+
+    if (user.balance < data.bet) {
+      return socket.emit('errorMsg', 'ባላንስዎ በቂ አይደለም!');
+    }
+
     user.balance -= data.bet;
     socket.emit('balanceUpdated', user.balance);
 
-    // የተጠቃሚውን ቢንጎ ካርድ መመዝገብ
-    bingoActiveCards[tgId] = {
-      userId: tgId,
+    const newTicket = {
+      userId: user.id,
       userName: user.name,
       numbers: data.numbers,
       bet: data.bet,
-      hits: 0
+      maxWin: data.maxWin,
+      hitsCount: 0
     };
 
-    // 🚀 የያዘውን ቁጥር እና ካርድ ለሁሉም ተጠቃሚዎች በቅጽበት ማሳየት (Broadcast)
-    io.emit('updateAllBingoCards', {
-      allCards: bingoActiveCards
-    });
-  });
-
-  // 3. ኬኖ ጨዋታ (ቀድሞ የነበረው)
-  socket.on('buyTicket', (data) => {
-    const user = registeredUsers[String(data.userId)];
-    if (!user || user.balance < data.bet) return socket.emit('errorMsg', 'ባላንስ በቂ አይደለም!');
-    user.balance -= data.bet;
-    socket.emit('balanceUpdated', user.balance);
+    activeKenoTickets.push(newTicket);
     socket.emit('ticketBoughtSuccess');
+    io.emit('updateActiveKenoTickets', activeKenoTickets);
   });
 
   socket.on('disconnect', () => {
@@ -147,5 +142,5 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`Bingo & Keno Live Server በፖርት ${PORT} እየሰራ ነው...`);
+  console.log(`Keno & Bingo Live Server በፖርት ${PORT} ላይ እየሰራ ነው...`);
 });
