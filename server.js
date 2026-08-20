@@ -37,7 +37,7 @@ let activeTickets = [];
 let totalPlayersCount = 4325;
 let timer = 60;
 
-// የሰዓት ቆጣሪ እና የጨዋታ ዙር (Timer & Game Loop)
+// የሰዓት ቆጣሪ እና የኬኖ ዙር (Timer & Game Loop)
 setInterval(() => {
     timer--;
     if (timer <= 0) {
@@ -46,7 +46,6 @@ setInterval(() => {
         activeTickets = [];
         io.emit('gameReset');
     } else {
-        // በየሰከንዱ አዳዲስ ቁጥሮች ማውጣት (ጨዋታው ሲጀመር)
         if (timer <= 50 && currentDrawnList.length < 20) {
             let randNum;
             do {
@@ -55,7 +54,6 @@ setInterval(() => {
 
             currentDrawnList.push(randNum);
 
-            // የቲኬቶችን ውጤት ማላት
             activeTickets.forEach(ticket => {
                 let hits = ticket.numbers.filter(n => currentDrawnList.includes(n)).length;
                 ticket.hitsCount = hits;
@@ -96,7 +94,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // ቲኬት መግዛት (Buy Ticket)
+    // ኬኖ ቲኬት መግዛት (Buy Keno Ticket)
     socket.on('buyTicket', async (data) => {
         try {
             let user = await User.findOne({ telegramId: data.userId });
@@ -105,6 +103,7 @@ io.on('connection', (socket) => {
             }
 
             user.balance -= data.bet;
+            user.history.unshift({ type: 'KENO_BET', amount: -data.bet, date: new Date() });
             await user.save();
 
             let newTicket = {
@@ -122,6 +121,44 @@ io.on('connection', (socket) => {
             io.emit('updateActiveTickets', activeTickets);
         } catch (err) {
             console.error('Buy ticket error:', err);
+        }
+    });
+
+    // --- የቢንጎ ሼር ባላንስ እና ጨዋታ (Bingo Shared Wallet Events) ---
+    
+    // ዩዘር የቢንጎ ካርድ ሲገዛ (ብር መቀነስ)
+    socket.on('bingo_buy_card', async (data) => {
+        try {
+            let user = await User.findOne({ telegramId: data.userId });
+            if (!user || user.balance < data.bet) {
+                return socket.emit('errorMsg', 'በቂ ባላንስ የለዎትም!');
+            }
+
+            user.balance -= data.bet;
+            user.history.unshift({ type: 'BINGO_BET', amount: -data.bet, date: new Date() });
+            await user.save();
+
+            socket.emit('balanceUpdated', user.balance);
+            socket.emit('bingo_card_success');
+        } catch (err) {
+            console.error('Bingo buy error:', err);
+        }
+    });
+
+    // ዩዘር ቢንጎ አሸናፊ ሲሆን (ብር መጨመር)
+    socket.on('bingo_winner', async (data) => {
+        try {
+            let user = await User.findOne({ telegramId: data.userId });
+            if (user) {
+                user.balance += data.winAmount;
+                user.history.unshift({ type: 'BINGO_WIN', amount: data.winAmount, date: new Date() });
+                await user.save();
+
+                socket.emit('balanceUpdated', user.balance);
+                io.emit('infoMsg', `🎉 ተጫዋች ${user.name} የቢንጎ ጨዋታውን አሸንፏል! (+${data.winAmount} ETB)`);
+            }
+        } catch (err) {
+            console.error('Bingo win error:', err);
         }
     });
 
@@ -149,6 +186,7 @@ io.on('connection', (socket) => {
                 return socket.emit('errorMsg', 'በቂ ባላንስ የለዎትም!');
             }
             user.balance -= data.amount;
+            user.history.unshift({ type: 'WITHDRAW', amount: -data.amount, date: new Date() });
             await user.save();
             socket.emit('balanceUpdated', user.balance);
             socket.emit('infoMsg', 'የወጪ ጥያቄዎ በትክክል ተልኳል፤ በቅርብ ጊዜ ይለቀቅልዎታል።');
@@ -165,14 +203,14 @@ io.on('connection', (socket) => {
 // --- 5. የቴሌግራም ቦት ትዕዛዞች (Telegram Bot Handlers) ---
 bot.onText(/\/start/, (msg) => {
     const chatId = msg.chat.id;
-    const welcomeText = "እንኳን ወደ ኬኖ ጨዋታ በደህና መጡ! ከታች ያሉትን አማራጮች በመጠቀም መጫወት ይችላሉ።";
+    const welcomeText = "እንኳን ወደ ኬኖ እና ቢንጎ ጨዋታ በደህና መጡ! ከታች ያሉትን አማራጮች በመጠቀም መጫወት ይችላሉ።";
 
     const options = {
         reply_markup: {
             inline_keyboard: [
                 [
-                    { text: "🎮 Play Keno", web_app: { url: webAppUrl } },
-                    { text: "👤  አካውንት (Register)", callback_data: "register" }
+                    { text: "🎮 Play Games", web_app: { url: webAppUrl } },
+                    { text: "👤 አካውንት (Register)", callback_data: "register" }
                 ],
                 [
                     { text: "💰 ባላንስ ማረጋገጫ (Balance)", callback_data: "balance" },
@@ -209,7 +247,7 @@ bot.on('callback_query', async (query) => {
                 bot.sendMessage(chatId, "👤 እርስዎ ቀደም ብለው ተመዝግበዋል!");
             }
         } else if (data === 'instruction') {
-            bot.sendMessage(chatId, "💬 **የጨዋታው መመሪያ፦**\n1. Play Keno የሚለውን በመጫን ጨዋታውን ይክፈቱ።\n2. ከ 1 እስከ 80 ካሉት ቁጥሮች እስከ 10 ቁጥሮች ይምረጡ።\n3. የመደብ ብር (Bet) በማስተካከል Buy ይበሉና ዕድልዎን ይሞክሩ!");
+            bot.sendMessage(chatId, "💬 **የጨዋታው መመሪያ፦**\n1. Play Games በመጫን ጨዋታውን ይክፈቱ።\n2. በኬኖ ወይም በቢንጎ ኪስ ቦርሳዎ (Wallet) እየተጠቀሙ መጫወት ይችላሉ።");
         }
     } catch (err) {
         console.error("Bot callback error:", err);
@@ -220,7 +258,7 @@ bot.on('callback_query', async (query) => {
 
 // --- ሰርቨሩን ማስጀመር ---
 const PORT = process.env.PORT || 3000;
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/keno_db';
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/keno_bingo_db';
 
 mongoose.connect(MONGO_URI)
     .then(() => {
