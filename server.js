@@ -14,7 +14,7 @@ const TELEBIRR_NO = "0915503379";
 
 // 📌 ዌብ አፕ ሊንኮች
 const WEB_APP_URL = "https://stunning-croquembouche-c49862.netlify.app"; // Keno URL
-const BINGO_WEB_APP_URL = "https://stunning-croquembouche-c49862.netlify.app/bingo"; // Bingo URL (ወይም የራሱ የተለየ Netlify URL ካለህ እዚህ ይተካል)
+const BINGO_WEB_APP_URL = "https://effervescent-maamoul-0a2b69.netlify.app"; // Bingo URL
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
