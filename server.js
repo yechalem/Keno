@@ -10,7 +10,8 @@ const io = new Server(server, { cors: { origin: "*" } });
 const BOT_TOKEN = process.env.BOT_TOKEN || '8707515963:AAEyGvW6EBngaucnqJkxx1iTERTvZ9U2T8E';
 const ADMIN_ID = process.env.ADMIN_ID || '686733543';
 const TELEBIRR_NO = "0915503379";
-const WEB_APP_URL = "https://tiny-dasik-98c906.netlify.app";
+// 📌 አዲሱ የ Vercel ዌብ አፕ ሊንክ ተካቷል
+const WEB_APP_URL = "https://keno-live-mufroy3re-azazhts-projects.vercel.app/";
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
@@ -294,7 +295,6 @@ io.on('connection', (socket) => {
     socket.emit('ticketBoughtSuccess');
   });
 
-  // 📌 የቴሌብር SMS ማረጋገጫ ሎጂክ
   socket.on('verifyAndDeposit', (data) => {
     const userId = String(data.userId);
     const amount = parseFloat(data.amount);
