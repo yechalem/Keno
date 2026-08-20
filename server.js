@@ -20,12 +20,12 @@ bot.on("polling_error", (err) => {
   }
 });
 
-const usersDB = {};       
-let activeTickets = [];   
-let drawnNumbers = [];    
+const usersDB = {};        
+let activeTickets = [];    
+let drawnNumbers = [];     
 let isDrawing = false;
 let gameTimer = 60; 
-let currentFakePlayerCount = 3200; // ቢያንስ በ 3,200 ይጀምራል
+let currentFakePlayerCount = 3200;
 
 const PAYTABLE = {
   1: { 1: 3.5 },
@@ -40,7 +40,6 @@ const PAYTABLE = {
   10: { 10: 25000, 9: 2000, 8: 400, 7: 50, 6: 10, 5: 2 }
 };
 
-// 90% የወንድ ስሞች + 10% የሴት ስሞች
 const MALE_NAMES = [
   "Abebe", "Dawit", "Daniel", "Kirubel", "Yonas", "Solomon", "Alex", "Sami", "Michael", "Robel",
   "Nati", "Aman", "Ermias", "Henok", "Yosef", "Kibrom", "Binyam", "Abel", "Tewodros", "Kaleb",
@@ -53,7 +52,7 @@ const FEMALE_NAMES = [
 ];
 
 function getRandomName() {
-  const isMale = Math.random() < 0.9; // 90% የወንድ እድል
+  const isMale = Math.random() < 0.9;
   const list = isMale ? MALE_NAMES : FEMALE_NAMES;
   return list[Math.floor(Math.random() * list.length)];
 }
@@ -114,18 +113,12 @@ bot.onText(/\/deposit_(\d+)_(\d+(\.\d+)?)/, (msg, match) => {
   bot.sendMessage(targetUserId, `🎉 የ ${amount} ETB Deposit ጥያቄዎ ጸድቋል!\n\n💰 የአሁኑ ባላንስዎ፦ ${newBalance.toFixed(2)} ETB`);
 });
 
-// ⏱️ በየሰከንዱ ተጫዋቾች እና ትኬቶች እንዲጨምሩ የሚያደርግ ሎጂክ
 setInterval(() => {
   if (!isDrawing) {
     gameTimer--;
-
-    // በየሰከንዱ ከ 10 እስከ 35 አዳዲስ ተጫዋቾች ይጨምራሉ
     currentFakePlayerCount += Math.floor(Math.random() * 25) + 10;
-
-    // አዲስ Fake Ticket ማፍራት
     addNewFakeTicket();
 
-    // መረጃውን ያለ ሬሎድ ለሁሉም ብራውዘር መላክ
     io.emit('updateLiveStats', {
       tickets: activeTickets,
       totalPlayersCount: currentFakePlayerCount,
@@ -301,14 +294,31 @@ io.on('connection', (socket) => {
     socket.emit('ticketBoughtSuccess');
   });
 
-  socket.on('requestDeposit', (data) => {
+  // 📌 የቴሌብር SMS ማረጋገጫ ሎጂክ
+  socket.on('verifyAndDeposit', (data) => {
     const userId = String(data.userId);
+    const amount = parseFloat(data.amount);
+    const smsText = data.smsText;
     const user = usersDB[userId];
-    
-    const msgText = `📥 የDeposit ጥያቄ!\n\n👤 ተጫዋች: ${user ? user.name : 'Unknown'}\n🆔 ID: ${userId}\n💰 መጠን: ${data.amount} ETB\n📱 Ref: ${data.ref}\n\nለማጽደቅ ከታች ያለውን ይጫኑ፦\n/deposit_${userId}_${data.amount}`;
-    
-    bot.sendMessage(ADMIN_ID, msgText);
-    socket.emit('infoMsg', 'የDeposit ጥያቄዎ ለ Admin ተልኳል!');
+
+    if (!user) {
+      return socket.emit('errorMsg', 'ተጠቃሚው አልተገኘም!');
+    }
+
+    if (smsText.includes(TELEBIRR_NO) && smsText.includes(amount.toString())) {
+      user.balance += amount;
+      
+      socket.emit('balanceUpdated', user.balance);
+      socket.emit('infoMsg', `🎉 የ ${amount} ETB ዴፖዚትዎ በተሳካ ሁኔታ ተደምሯል!`);
+
+      const adminMsg = `✅ አዲስ በቴሌብር የተረጋገጠ ዴፖዚት!\n\n👤 ተጫዋች: ${user.name}\n🆔 ID: ${userId}\n💰 መጠን: ${amount} ETB\n\n📝 SMS:\n${smsText}`;
+      bot.sendMessage(ADMIN_ID, adminMsg);
+    } else {
+      const adminMsg = `⚠️ ያልተረጋገጠ የቴሌብር SMS ማረጋገጫ ሙከራ!\n\n👤 ተጫዋች: ${user.name}\n🆔 ID: ${userId}\n💰 መጠን: ${amount} ETB\n\n📝 SMS:\n${smsText}\n\nለማጽደቅ ይጠቀሙ፦\n/deposit_${userId}_${amount}`;
+      bot.sendMessage(ADMIN_ID, adminMsg);
+      
+      socket.emit('infoMsg', 'የላኩት SMS በራስ ሰር ሊረጋገጥ አልቻለም፤ ለAdmin ተልኳል ተረጋግጦ ይጨመራል!');
+    }
   });
 
   socket.on('requestWithdraw', (data) => {
